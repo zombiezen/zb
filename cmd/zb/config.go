@@ -24,9 +24,9 @@ import (
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/tailscale/hujson"
+	"zb.256lights.llc/pkg/internal/althttp"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/fileurl"
-	"zb.256lights.llc/pkg/internal/httpbucket"
 	"zb.256lights.llc/pkg/internal/httpcache"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/netrc"
@@ -276,11 +276,11 @@ func (g *globalConfig) newHTTPClient() (*http.Client, io.Closer, error) {
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 	if awsDefaultConfig, err := awsconfig.LoadDefaultConfig(context.Background()); err != nil {
-		baseTransport.RegisterProtocol(httpbucket.S3Scheme, &stubRoundTripper{
+		baseTransport.RegisterProtocol(althttp.S3Scheme, &stubRoundTripper{
 			message: err.Error(),
 		})
 	} else {
-		baseTransport.RegisterProtocol(httpbucket.S3Scheme, &httpbucket.S3Transport{
+		baseTransport.RegisterProtocol(althttp.S3Scheme, &althttp.S3Transport{
 			Client: s3.NewFromConfig(awsDefaultConfig),
 		})
 	}

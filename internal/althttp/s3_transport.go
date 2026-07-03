@@ -1,7 +1,7 @@
 // Copyright 2026 The zb Authors
 // SPDX-License-Identifier: MIT
 
-package httpbucket
+package althttp
 
 import (
 	"errors"

@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 /*
-Package httpbucket provides access to common cloud service storage providers
+Package althttp provides access to non-HTTP protocols such as "file://" URLs
+and common cloud service storage providers
 in the form of [http.RoundTripper] implementations that present an HTTP GET/PUT API.
 */
-package httpbucket
+package althttp
 
 import (
 	"io"
