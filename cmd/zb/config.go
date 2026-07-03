@@ -15,14 +15,18 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/tailscale/hujson"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/fileurl"
+	"zb.256lights.llc/pkg/internal/httpbucket"
 	"zb.256lights.llc/pkg/internal/httpcache"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/netrc"
@@ -259,7 +263,29 @@ func (g *globalConfig) reusePolicy() *zbstorerpc.ReusePolicy {
 }
 
 func (g *globalConfig) newHTTPClient() (*http.Client, io.Closer, error) {
-	cache := httpcache.Open(g.HTTPCacheDB, http.DefaultTransport, &httpcache.Options{
+	baseTransport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+	if awsDefaultConfig, err := awsconfig.LoadDefaultConfig(context.Background()); err != nil {
+		baseTransport.RegisterProtocol(httpbucket.S3Scheme, &stubRoundTripper{
+			message: err.Error(),
+		})
+	} else {
+		baseTransport.RegisterProtocol(httpbucket.S3Scheme, &httpbucket.S3Transport{
+			Client: s3.NewFromConfig(awsDefaultConfig),
+		})
+	}
+
+	cache := httpcache.Open(g.HTTPCacheDB, baseTransport, &httpcache.Options{
 		MaxResponseSize:         4 << 20, // 4 MiB
 		RequestCoalescingCutoff: 5 * time.Second,
 		ErrorReporter: httpcache.ErrorReporterFunc(func(ctx context.Context, info *httpcache.RequestInfo, err error) {
@@ -285,7 +311,7 @@ func (g *globalConfig) newHTTPClient() (*http.Client, io.Closer, error) {
 	return &http.Client{
 		Transport: &netrc.Transport{
 			Netrc:        netrcData,
-			RoundTripper: transport,
+			RoundTripper: cache,
 		},
 	}, cache, nil
 }
@@ -457,6 +483,33 @@ func (sc *storeConfig) resolve(base *url.URL) *storeConfig {
 // storeConfigHTTPProperties is the set of properties in [storeConfig] for the "http" type.
 type storeConfigHTTPProperties struct {
 	URL string `json:"url"`
+}
+
+type stubRoundTripper struct {
+	message string
+}
+
+func (stub *stubRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	message := stub.message
+	if !strings.HasSuffix(message, "\n") {
+		message += "\n"
+	}
+	return &http.Response{
+		Request:       req,
+		Proto:         "HTTP/1.1",
+		ProtoMajor:    1,
+		ProtoMinor:    1,
+		StatusCode:    http.StatusInternalServerError,
+		Status:        http.StatusText(http.StatusInternalServerError),
+		ContentLength: int64(len(message)),
+		Header: http.Header{
+			"Content-Type":           {"text/plain; charset=utf-8"},
+			"X-Content-Type-Options": {"nosniff"},
+			"Content-Length":         {strconv.Itoa(len(message))},
+			"Date":                   {time.Now().UTC().Format(http.TimeFormat)},
+		},
+		Body: io.NopCloser(strings.NewReader(message)),
+	}, nil
 }
 
 // defaultVarDir returns "/opt/zb/var/zb" on Unix-like systems or `C:\zb\var\zb` on Windows systems.

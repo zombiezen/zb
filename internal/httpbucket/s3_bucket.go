@@ -14,6 +14,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
+// S3Scheme is the URL scheme for [S3Transport].
+const S3Scheme = "s3"
+
 var _ http.RoundTripper = (*S3Transport)(nil)
 
 // S3Transport is an [http.RoundTripper] that transform requests to "s3://" URLs
@@ -24,7 +27,7 @@ type S3Transport struct {
 
 // RoundTrip implements [http.RoundTripper] for "s3://" URLs.
 func (transport *S3Transport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.URL.Scheme != "s3" {
+	if req.URL.Scheme != S3Scheme {
 		return nil, http.ErrSkipAltProtocol
 	}
 	switch req.Method {
