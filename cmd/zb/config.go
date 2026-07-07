@@ -317,17 +317,17 @@ func (g *globalConfig) newHTTPClient() (*http.Client, io.Closer, error) {
 }
 
 // fileSplitTransport is an [http.RoundTripper]
-// that sends "file://" URLs directly to a [fileurl.Transport].
+// that sends "file://" URLs directly to a [althttp.FileTransport].
 // This allows "file://" URLs to bypass caching
 // and other middleware unnecessary for local file access.
 type fileSplitTransport struct {
-	file     fileurl.Transport
+	file     althttp.FileTransport
 	fallback http.RoundTripper
 }
 
 func (t *fileSplitTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.URL.Scheme == fileurl.Scheme {
-		var transport fileurl.Transport
+	if req.URL.Scheme == althttp.FileScheme {
+		var transport althttp.FileTransport
 		if t != nil {
 			transport = t.file
 		}

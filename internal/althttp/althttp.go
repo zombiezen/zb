@@ -14,7 +14,16 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"zb.256lights.llc/pkg/internal/fileurl"
 )
+
+// FileTransport is an [http.RoundTripper] that serves GET, HEAD, and PUT requests
+// to the local filesystem for "file://" URLs.
+type FileTransport = fileurl.Transport
+
+// FileScheme is the URL scheme for [FileTransport].
+const FileScheme = fileurl.Scheme
 
 func errorResponse(req *http.Request, error string, code int) *http.Response {
 	if error != "" {
