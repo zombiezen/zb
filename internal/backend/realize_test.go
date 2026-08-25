@@ -1335,9 +1335,7 @@ func TestRealizeSignature(t *testing.T) {
 	if err := exporter.Close(); err != nil {
 		t.Fatal(err)
 	}
-	drvHash, err := drvContent.SHA256RealizationHash(func(ref zbstore.OutputReference) (zbstore.Path, bool) {
-		return "", false
-	})
+	drvHash, err := drvContent.SHA256RealizationHash(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1463,9 +1461,7 @@ func TestRealizeSingleDerivationFallback(t *testing.T) {
 	if err := exporter.Close(); err != nil {
 		t.Fatal(err)
 	}
-	drvHash, err := drvContent.SHA256RealizationHash(func(ref zbstore.OutputReference) (zbstore.Path, bool) {
-		return "", false
-	})
+	drvHash, err := drvContent.SHA256RealizationHash(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1569,9 +1565,7 @@ func TestRealizeWithImproperlyNamedFallback(t *testing.T) {
 	if err := exporter.Close(); err != nil {
 		t.Fatal(err)
 	}
-	drvHash, err := drvContent.SHA256RealizationHash(func(ref zbstore.OutputReference) (zbstore.Path, bool) {
-		return "", false
-	})
+	drvHash, err := drvContent.SHA256RealizationHash(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1729,18 +1723,16 @@ func TestRealizeMultiStepFallback(t *testing.T) {
 	if err := fallbackStore.StoreImport(ctx, fallbackExportBuffer); err != nil {
 		t.Fatal(err)
 	}
-	drv1Hash, err := drv1Content.SHA256RealizationHash(func(ref zbstore.OutputReference) (zbstore.Path, bool) {
-		return "", false
-	})
+	drv1Hash, err := drv1Content.SHA256RealizationHash(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	drv2Hash, err := drv2Content.SHA256RealizationHash(func(ref zbstore.OutputReference) (zbstore.Path, bool) {
+	drv2Hash, err := drv2Content.SHA256RealizationHash(func(ref zbstore.OutputReference) (zbstore.Path, error) {
 		switch {
 		case ref.DrvPath == drv1Path && ref.OutputName == zbstore.DefaultDerivationOutputName:
-			return wantOutputPath1, true
+			return wantOutputPath1, nil
 		}
-		return "", false
+		return "", fmt.Errorf("missing realization for %v", ref)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1878,9 +1870,7 @@ func TestRealizeMultiStepFallbackIntermediate(t *testing.T) {
 	if err := fallbackStore.StoreImport(ctx, fallbackExportBuffer); err != nil {
 		t.Fatal(err)
 	}
-	drv1Hash, err := drv1Content.SHA256RealizationHash(func(ref zbstore.OutputReference) (zbstore.Path, bool) {
-		return "", false
-	})
+	drv1Hash, err := drv1Content.SHA256RealizationHash(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2017,18 +2007,16 @@ func TestRealizeMultiStepFallbackMissingObject(t *testing.T) {
 	if err := fallbackStore.StoreImport(ctx, fallbackExportBuffer); err != nil {
 		t.Fatal(err)
 	}
-	drv1Hash, err := drv1Content.SHA256RealizationHash(func(ref zbstore.OutputReference) (zbstore.Path, bool) {
-		return "", false
-	})
+	drv1Hash, err := drv1Content.SHA256RealizationHash(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	drv2Hash, err := drv2Content.SHA256RealizationHash(func(ref zbstore.OutputReference) (zbstore.Path, bool) {
+	drv2Hash, err := drv2Content.SHA256RealizationHash(func(ref zbstore.OutputReference) (zbstore.Path, error) {
 		switch {
 		case ref.DrvPath == drv1Path && ref.OutputName == zbstore.DefaultDerivationOutputName:
-			return wantOutputPath1, true
+			return wantOutputPath1, nil
 		}
-		return "", false
+		return "", fmt.Errorf("missing realization for %v", ref)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2318,9 +2306,7 @@ func TestRealizeUpload(t *testing.T) {
 	}
 
 	// Verify realizations.
-	drvHash, err := drvContent.SHA256RealizationHash(func(ref zbstore.OutputReference) (zbstore.Path, bool) {
-		return "", false
-	})
+	drvHash, err := drvContent.SHA256RealizationHash(nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -334,13 +334,13 @@ func (b *builder) toEquivalenceClass(ref zbstore.OutputReference) (_ derivationP
 }
 
 // lookup returns the realized path for the given output if the builder realized one.
-func (b *builder) lookup(ref zbstore.OutputReference) (_ zbstore.Path, ok bool) {
+func (b *builder) lookup(ref zbstore.OutputReference) (_ zbstore.Path, err error) {
 	eqClassRef, ok := b.toEquivalenceClass(ref)
 	if !ok {
-		return "", false
+		return "", fmt.Errorf("missing realization for %v", ref)
 	}
 	r, ok := b.realizations[eqClassRef.equivalenceClass]
-	return r.path, ok
+	return r.path, nil
 }
 
 var errUnfinishedRealization = errors.New("realization did not complete")
@@ -1301,7 +1301,7 @@ type builderInvocation struct {
 	// lookup returns the store path for the given derivation output.
 	// lookup should return paths for the inputs to the derivation the runner is building
 	// at least.
-	lookup func(ref zbstore.OutputReference) (zbstore.Path, bool)
+	lookup func(ref zbstore.OutputReference) (zbstore.Path, error)
 	// closure calls yield for each store object
 	// in the transitive closure of the store object at the given path.
 	closure func(path zbstore.Path, yield func(zbstore.Path) bool) error
@@ -1507,14 +1507,14 @@ func outputPathRewrites(outputMap map[string]zbstore.Path) iter.Seq2[string, zbs
 
 // derivationInputRewrites returns a substitution map
 // of output placeholders to realization paths.
-func derivationInputRewrites(drv *zbstore.Derivation, realization func(ref zbstore.OutputReference) (zbstore.Path, bool)) (map[string]zbstore.Path, error) {
+func derivationInputRewrites(drv *zbstore.Derivation, realization func(ref zbstore.OutputReference) (zbstore.Path, error)) (map[string]zbstore.Path, error) {
 	// TODO(maybe): Also rewrite transitive derivation hashes?
 	result := make(map[string]zbstore.Path)
 	for ref := range drv.InputDerivationOutputs() {
 		placeholder := zbstore.UnknownCAOutputPlaceholder(ref)
-		rpath, ok := realization(ref)
-		if !ok {
-			return nil, fmt.Errorf("compute input rewrites: missing realization for %v", ref)
+		rpath, err := realization(ref)
+		if err != nil {
+			return nil, fmt.Errorf("compute input rewrites: %v", err)
 		}
 		result[placeholder] = rpath
 	}

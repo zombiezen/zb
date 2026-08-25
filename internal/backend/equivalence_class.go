@@ -85,8 +85,8 @@ func (dpe derivationPathAndEquivalenceClass) toOutputReference() zbstore.OutputR
 // (but the converse is not necessarily true).
 func pseudoHashDrv(drv *zbstore.Derivation) (nix.Hash, error) {
 	if drv.Outputs[zbstore.DefaultDerivationOutputName].IsFixed() {
-		return drv.SHA256RealizationHash(func(ref zbstore.OutputReference) (zbstore.Path, bool) {
-			return "", false
+		return drv.SHA256RealizationHash(func(ref zbstore.OutputReference) (zbstore.Path, error) {
+			return "", fmt.Errorf("realization for %v: fixed derivations must not require input derivations", ref)
 		})
 	}
 

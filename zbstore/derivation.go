@@ -388,11 +388,18 @@ func marshalInputDerivations[K ~string](buf []byte, m map[K]*sets.Sorted[string]
 // SHA256RealizationHash computes the hash for the given derivation
 // based on the realizations of its input derivations.
 // This hash is intended for use in [RealizationOutputReference].
-func (drv *Derivation) SHA256RealizationHash(realization func(ref OutputReference) (Path, bool)) (nix.Hash, error) {
+// If realization is nil, then SHA256RealizationHash will return an error
+// if the derivation requires other realizations to compute its hash.
+func (drv *Derivation) SHA256RealizationHash(realization func(ref OutputReference) (Path, error)) (nix.Hash, error) {
 	if drv.Outputs[DefaultDerivationOutputName].IsFixed() {
 		return hashDrvFixed(drv)
 	}
 
+	if realization == nil {
+		realization = func(ref OutputReference) (Path, error) {
+			return "", fmt.Errorf("missing realization for %v", ref)
+		}
+	}
 	rewrites, err := derivationInputRewrites(drv, realization)
 	if err != nil {
 		return nix.Hash{}, fmt.Errorf("hash derivation: %v", err)

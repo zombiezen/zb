@@ -11,14 +11,14 @@ import (
 
 // derivationInputRewrites returns a substitution map
 // of output placeholders to realization paths.
-func derivationInputRewrites(drv *Derivation, realization func(ref OutputReference) (Path, bool)) (map[string]Path, error) {
+func derivationInputRewrites(drv *Derivation, realization func(ref OutputReference) (Path, error)) (map[string]Path, error) {
 	// TODO(maybe): Also rewrite transitive derivation hashes?
 	result := make(map[string]Path)
 	for ref := range drv.InputDerivationOutputs() {
 		placeholder := UnknownCAOutputPlaceholder(ref)
-		rpath, ok := realization(ref)
-		if !ok {
-			return nil, fmt.Errorf("compute input rewrites: missing realization for %v", ref)
+		rpath, err := realization(ref)
+		if err != nil {
+			return nil, fmt.Errorf("compute input rewrites: %v", err)
 		}
 		result[placeholder] = rpath
 	}

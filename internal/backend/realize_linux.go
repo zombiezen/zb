@@ -35,11 +35,11 @@ func runSandboxed(ctx context.Context, invocation *builderInvocation) error {
 		}
 	}
 	for input := range invocation.derivation.InputDerivationOutputs() {
-		inputPath, ok := invocation.lookup(input)
-		if !ok {
-			return fmt.Errorf("missing store path for %v", input)
+		inputPath, err := invocation.lookup(input)
+		if err != nil {
+			return err
 		}
-		err := invocation.closure(inputPath, func(path zbstore.Path) bool {
+		err = invocation.closure(inputPath, func(path zbstore.Path) bool {
 			inputs.Add(path)
 			return true
 		})
