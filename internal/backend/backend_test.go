@@ -466,7 +466,10 @@ func TestDelete(t *testing.T) {
 // wantObjectInfo builds the expected [*zbstorerpcrpc.ObjectInfo] for the given blob.
 // It uses got.NARHash to determine the hashing algorithm to check against.
 func wantObjectInfo(got *zbstorerpc.ObjectInfo, blob *zbstore.Blob) *zbstorerpc.ObjectInfo {
-	ht := got.NARHash.Type()
+	var ht nix.HashType
+	if got != nil {
+		ht = got.NARHash.Type()
+	}
 	if ht == 0 {
 		ht = nix.SHA256
 	}

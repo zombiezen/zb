@@ -24,7 +24,6 @@ import (
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/multierror"
-	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/internal/xslices"
 	"zb.256lights.llc/pkg/internal/xtime"
@@ -792,9 +791,13 @@ func (s *Server) RecentBuildIDs(ctx context.Context, limit int) ([]string, error
 // If the store path is already in the database
 // and the information matches what is already there,
 // then Register is a no-op and returns nil.
+//
+// If info.NARSize and/or info.NARHash are omitted, then Register will compute them
+// before storing the info in the store's database.
 func (s *Server) Register(ctx context.Context, info *zbstore.ObjectInfo) error {
-	if info.ContentAddress.IsZero() {
-		return fmt.Errorf("register %s: missing content address (CA) assertion", info.StorePath)
+	storeRefs := zbstore.MakeReferences(info.StorePath, &info.References)
+	if err := zbstore.ValidateContentAddress(info.ContentAddress, storeRefs); err != nil {
+		return fmt.Errorf("register %s: %v", info.StorePath, err)
 	}
 
 	unlock, err := s.writing.lock(ctx, info.StorePath)
@@ -816,6 +819,12 @@ func (s *Server) Register(ctx context.Context, info *zbstore.ObjectInfo) error {
 
 	existingInfo, err := pathInfo(conn, info.StorePath)
 	if err == nil {
+		if info.NARHash.IsZero() {
+			existingInfo.NARHash = nix.Hash{}
+		}
+		if !info.HasNARSize() {
+			existingInfo.NARSize = -1
+		}
 		if !existingInfo.Equal(info) {
 			return fmt.Errorf("register %s: does not match existing data", info.StorePath)
 		}
@@ -827,28 +836,31 @@ func (s *Server) Register(ctx context.Context, info *zbstore.ObjectInfo) error {
 
 	pr, pw := io.Pipe()
 	done := make(chan struct{})
-	wc := new(xio.WriteCounter)
-	hasher := nix.NewHasher(info.NARHash.Type())
+	var hasher *nix.Hasher
+	if info.NARHash.IsZero() {
+		hasher = nix.NewHasher(nix.SHA256)
+	}
 	go func() {
-		err := nar.DumpPath(io.MultiWriter(wc, hasher, pw), realPath)
+		defer close(done)
+		var dumpWriter io.Writer = pw
+		if hasher != nil {
+			dumpWriter = io.MultiWriter(hasher, pw)
+		}
+		err := nar.DumpPath(dumpWriter, realPath)
 		pw.CloseWithError(err)
-		close(done)
 	}()
-	_, err = verifyContentAddress(ctx, info.StorePath, pr, &info.References, info.ContentAddress, s.caCreateTemp)
+	obj := &pipeObject{info: *info, narContent: pr}
+	info.NARSize, err = zbstore.VerifyObject(ctx, io.Discard, obj, &zbstore.ContentAddressOptions{
+		CreateTemp: s.caCreateTemp,
+		Log:        func(msg string) { log.Debugf(ctx, "%s", msg) },
+	})
 	pr.Close()
 	<-done
 	if err != nil {
 		return fmt.Errorf("register %s: %v", info.StorePath, err)
 	}
-
-	// TODO(maybe): Is it important to validate these fields?
-	// As long as we know the content address,
-	// these two fields are computed.
-	if want := int64(*wc); want != info.NARSize {
-		return fmt.Errorf("register %s: nar size %d does not match %d from filesystem", info.StorePath, info.NARSize, want)
-	}
-	if want := hasher.SumHash(); !want.Equal(info.NARHash) {
-		return fmt.Errorf("register %s: nar hash %v does not match %v from filesystem", info.StorePath, info.NARHash, want)
+	if hasher != nil {
+		info.NARHash = hasher.SumHash()
 	}
 
 	if err := insertObject(ctx, conn, info); err != nil {

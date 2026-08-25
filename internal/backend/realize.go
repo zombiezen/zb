@@ -1611,13 +1611,12 @@ func (b *builder) postprocessFixedOutput(ctx context.Context, conn *sqlite.Conn,
 	log.Debugf(ctx, "Verifying fixed output %s...", outputPath)
 
 	realOutputPath := b.server.realPath(outputPath)
-	wc := new(xio.WriteCounter)
 	h := nix.NewHasher(nix.SHA256)
 	pr, pw := io.Pipe()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		if err := nar.DumpPath(io.MultiWriter(wc, h, pw), realOutputPath); err != nil {
+		if err := nar.DumpPath(io.MultiWriter(h, pw), realOutputPath); err != nil {
 			pw.CloseWithError(err)
 		} else {
 			pw.Close()
@@ -1628,16 +1627,24 @@ func (b *builder) postprocessFixedOutput(ctx context.Context, conn *sqlite.Conn,
 		<-done
 	}()
 
-	if _, err := verifyContentAddress(ctx, outputPath, pr, nil, ca, b.server.caCreateTemp); err != nil {
+	obj := &pipeObject{
+		info: zbstore.ObjectInfo{
+			StorePath:      outputPath,
+			ContentAddress: ca,
+		},
+		narContent: pr,
+	}
+	narSize, err := zbstore.VerifyObject(ctx, io.Discard, obj, &zbstore.ContentAddressOptions{
+		CreateTemp: b.server.caCreateTemp,
+		Log:        func(msg string) { log.Debugf(ctx, "%s", msg) },
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	info = &zbstore.ObjectInfo{
-		StorePath:      outputPath,
-		NARHash:        h.SumHash(),
-		NARSize:        int64(*wc),
-		ContentAddress: ca,
-	}
+	info = new(obj.info)
+	info.NARSize = narSize
+	info.NARHash = h.SumHash()
 	err = func() (err error) {
 		endFn, err := sqlitex.ImmediateTransaction(conn)
 		if err != nil {

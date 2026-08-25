@@ -11,7 +11,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"zb.256lights.llc/pkg/bytebuffer"
@@ -110,19 +109,14 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 	}()
 
 	if trailer.StorePath.Dir() != r.dir {
-		log.Warnf(ctx, "Rejecting %s (not in %s)", trailer.StorePath, r.dir)
+		log.Warnf(ctx, "Rejecting %s: not in %s", trailer.StorePath, r.dir)
 		return
 	}
-	ca, err := verifyContentAddress(r.ctx, trailer.StorePath, io.LimitReader(r.tmpFile, r.size), &trailer.References, trailer.ContentAddress, r.caCreateTemp)
-	if err != nil {
-		log.Warnf(ctx, "%v", err)
+	storeRefs := zbstore.MakeReferences(trailer.StorePath, &trailer.References)
+	if err := zbstore.ValidateContentAddress(trailer.ContentAddress, storeRefs); err != nil {
+		log.Warnf(ctx, "Rejecting %s: %v", trailer.StorePath, err)
 		return
 	}
-	if _, err := r.tmpFile.Seek(0, io.SeekStart); err != nil {
-		log.Errorf(ctx, "Unable to seek in store temp file: %v", err)
-		return
-	}
-
 	unlock, err := r.writing.lock(ctx, trailer.StorePath)
 	if err != nil {
 		log.Errorf(ctx, "Failed to lock %s: %v", trailer.StorePath, err)
@@ -130,8 +124,15 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 	}
 	defer unlock()
 
-	realPath := filepath.Join(r.realDir, trailer.StorePath.Base())
-	if _, err := os.Lstat(realPath); err == nil {
+	storeDir, err := os.OpenRoot(r.realDir)
+	if err != nil {
+		log.Errorf(ctx, "Import of %s failed: open store directory: %v", trailer.StorePath, err)
+		return
+	}
+	defer storeDir.Close()
+	base := trailer.StorePath.Base()
+	realPath := filepath.Join(r.realDir, base)
+	if _, err := storeDir.Lstat(base); err == nil {
 		log.Debugf(ctx, "Received NAR for %s. Exists in store, skipping...", trailer.StorePath)
 		return
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -140,9 +141,30 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 	}
 
 	log.Debugf(ctx, "Extracting %s.nar to %s...", trailer.StorePath, realPath)
-	if err := extractNAR(realPath, io.LimitReader(r.tmpFile, r.size)); err != nil {
-		log.Warnf(ctx, "Import of %s failed: %v", trailer.StorePath, err)
-		if err := os.RemoveAll(realPath); err != nil {
+	info := &zbstore.ObjectInfo{
+		StorePath:      trailer.StorePath,
+		NARSize:        r.size,
+		NARHash:        r.hasher.SumHash(),
+		ContentAddress: trailer.ContentAddress,
+		References:     trailer.References,
+	}
+	pr, pw := io.Pipe()
+	obj := &pipeObject{info: *info, narContent: r.tmpFile}
+	verifyDone := make(chan error)
+	go func() {
+		_, err := zbstore.VerifyObject(ctx, pw, obj, &zbstore.ContentAddressOptions{
+			CreateTemp: r.caCreateTemp,
+			Log:        func(msg string) { log.Debugf(ctx, "%s", msg) },
+		})
+		pw.CloseWithError(err)
+		verifyDone <- err
+	}()
+	extractError := extractNAR(storeDir, base, pr)
+	pr.Close()
+	verifyError := <-verifyDone
+	if extractError != nil || verifyError != nil {
+		log.Warnf(ctx, "Import of %s failed: %v", trailer.StorePath, errors.Join(extractError, verifyError))
+		if err := storeDir.RemoveAll(base); err != nil {
 			log.Errorf(ctx, "Failed to clean up partial import of %s: %v", trailer.StorePath, err)
 		}
 		return
@@ -152,7 +174,7 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 	conn, err := r.dbPool.Get(ctx)
 	if err != nil {
 		log.Warnf(ctx, "Connecting to store database: %v", err)
-		if err := os.RemoveAll(realPath); err != nil {
+		if err := storeDir.RemoveAll(base); err != nil {
 			log.Errorf(ctx, "Failed to clean up partial import of %s: %v", trailer.StorePath, err)
 		}
 		return
@@ -164,18 +186,11 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 			return err
 		}
 		defer endFn(&err)
-
-		return insertObject(ctx, conn, &zbstore.ObjectInfo{
-			StorePath:      trailer.StorePath,
-			NARSize:        r.size,
-			NARHash:        r.hasher.SumHash(),
-			ContentAddress: ca,
-			References:     trailer.References,
-		})
+		return insertObject(ctx, conn, info)
 	}()
 	if err != nil {
 		log.Errorf(ctx, "Recording import of %s: %v", trailer.StorePath, err)
-		if err := os.RemoveAll(realPath); err != nil {
+		if err := storeDir.RemoveAll(base); err != nil {
 			log.Errorf(ctx, "Failed to clean up partial import of %s: %v", trailer.StorePath, err)
 		}
 		return
@@ -186,83 +201,22 @@ func (r *NARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 	log.Infof(ctx, "Imported %s", trailer.StorePath)
 }
 
-// verifyContentAddress validates that the content matches the given content address.
-// If the content address is the zero value,
-// then the content address is computed as a "source" store object.
-func verifyContentAddress(ctx context.Context, path zbstore.Path, narContent io.Reader, refs *sets.Sorted[zbstore.Path], ca nix.ContentAddress, createTemp bytebuffer.Creator) (nix.ContentAddress, error) {
-	if !ca.IsZero() {
-		obj := &fakeObject{
-			narContent: narContent,
-			trailer: zbstore.ExportTrailer{
-				StorePath:      path,
-				ContentAddress: ca,
-			},
-		}
-		if refs != nil {
-			obj.trailer.References = *refs
-		}
-		opts := &zbstore.ContentAddressOptions{
-			CreateTemp: createTemp,
-			Log:        func(msg string) { log.Debugf(ctx, "%s", msg) },
-		}
-		if _, err := zbstore.VerifyObject(ctx, io.Discard, obj, opts); err != nil {
-			return nix.ContentAddress{}, err
-		}
-		return ca, nil
-	}
-
-	storeRefs := zbstore.MakeReferences(path, refs)
-	var digest string
-	if storeRefs.Self {
-		digest = path.Digest()
-	}
-	computed, _, err := zbstore.SourceSHA256ContentAddress(narContent, &zbstore.ContentAddressOptions{
-		Digest:     digest,
-		CreateTemp: createTemp,
-		Log:        func(msg string) { log.Debugf(ctx, "%s", msg) },
-	})
-	if err != nil {
-		return nix.ContentAddress{}, fmt.Errorf("verify %s content address: %v", path, err)
-	}
-
-	computedPath, err := zbstore.FixedCAOutputPath(path.Dir(), path.Name(), computed, storeRefs)
-	if err != nil {
-		return nix.ContentAddress{}, fmt.Errorf("verify %s content address: %v", path, err)
-	}
-	if path != computedPath {
-		return nix.ContentAddress{}, fmt.Errorf("verify %s content address: does not match computed path %s", path, computedPath)
-	}
-
-	return computed, nil
+type pipeObject struct {
+	info       zbstore.ObjectInfo
+	narContent io.Reader
 }
 
-type fakeObject struct {
-	trailer zbstore.ExportTrailer
-
-	contentWrite sync.Once
-	narContent   io.Reader
+func (obj *pipeObject) Info() *zbstore.ObjectInfo {
+	return &obj.info
 }
 
-func (obj *fakeObject) Info() *zbstore.ObjectInfo {
-	return &zbstore.ObjectInfo{
-		StorePath:      obj.trailer.StorePath,
-		References:     obj.trailer.References,
-		ContentAddress: obj.trailer.ContentAddress,
-	}
-}
-
-func (obj *fakeObject) WriteNAR(ctx context.Context, w io.Writer) error {
-	err := errMultipleReads
-	obj.contentWrite.Do(func() {
-		_, err = io.Copy(w, obj.narContent)
-	})
+func (obj *pipeObject) WriteNAR(ctx context.Context, w io.Writer) error {
+	_, err := io.Copy(w, obj.narContent)
 	return err
 }
 
-var errMultipleReads = errors.New("object cannot be read more than once")
-
 // extractNAR extracts a NAR file to the local filesystem at the given path.
-func extractNAR(dst string, r io.Reader) error {
+func extractNAR(root *os.Root, dst string, r io.Reader) error {
 	nr := nar.NewReader(r)
 	for {
 		hdr, err := nr.Next()
@@ -279,7 +233,7 @@ func extractNAR(dst string, r io.Reader) error {
 			if hdr.Mode&0o111 != 0 {
 				perm = 0o755
 			}
-			f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+			f, err := root.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
 			if err != nil {
 				return err
 			}
@@ -292,11 +246,11 @@ func extractNAR(dst string, r io.Reader) error {
 				return err2
 			}
 		case fs.ModeDir:
-			if err := os.Mkdir(p, 0o755); err != nil {
+			if err := root.Mkdir(p, 0o755); err != nil {
 				return err
 			}
 		case fs.ModeSymlink:
-			if err := os.Symlink(hdr.LinkTarget, p); err != nil {
+			if err := root.Symlink(hdr.LinkTarget, p); err != nil {
 				return err
 			}
 		default:
