@@ -327,7 +327,7 @@ func (grp *narBodyGroup) new() (io.ReadCloser, error) {
 			writer:    verifyWriter,
 			writeDone: verifyWriteDone,
 		}
-		body.verifyError = zbstore.VerifyObject(context.Background(), obj, &zbstore.ContentAddressOptions{
+		_, body.verifyError = zbstore.VerifyObject(context.Background(), io.Discard, obj, &zbstore.ContentAddressOptions{
 			CreateTemp: grp.createTemp,
 		})
 	}()

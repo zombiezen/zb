@@ -205,7 +205,7 @@ func verifyContentAddress(ctx context.Context, path zbstore.Path, narContent io.
 			CreateTemp: createTemp,
 			Log:        func(msg string) { log.Debugf(ctx, "%s", msg) },
 		}
-		if err := zbstore.VerifyObject(ctx, obj, opts); err != nil {
+		if _, err := zbstore.VerifyObject(ctx, io.Discard, obj, opts); err != nil {
 			return nix.ContentAddress{}, err
 		}
 		return ca, nil

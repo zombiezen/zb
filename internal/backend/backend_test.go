@@ -288,11 +288,12 @@ func TestDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const fakeDigest = "a"
+	const fakeDigest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	storeObject4Content := string(storePath2) + "\n" + string(dir) + fakeDigest + "-self.txt\n"
 	storePath4, _, err := storetest.ExportSourceFile(exporter, []byte(storeObject4Content), storetest.SourceExportOptions{
-		Name:      "self.txt",
-		Directory: dir,
+		Name:       "self.txt",
+		Directory:  dir,
+		TempDigest: fakeDigest,
 		References: zbstore.References{
 			Self:   true,
 			Others: *sets.NewSorted(storePath2),

@@ -131,7 +131,7 @@ func (s *storeReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 		NAR:           s.buf.Bytes(),
 		ExportTrailer: *trailer,
 	}
-	if err := zbstore.VerifyObject(context.Background(), obj, nil); err != nil {
+	if _, err := zbstore.VerifyObject(context.Background(), io.Discard, obj, nil); err != nil {
 		s.errors.Add(err)
 		return
 	}
