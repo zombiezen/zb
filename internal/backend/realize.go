@@ -340,6 +340,9 @@ func (b *builder) lookup(ref zbstore.OutputReference) (_ zbstore.Path, err error
 		return "", fmt.Errorf("missing realization for %v", ref)
 	}
 	r, ok := b.realizations[eqClassRef.equivalenceClass]
+	if !ok {
+		return "", fmt.Errorf("missing realization for %v", ref)
+	}
 	return r.path, nil
 }
 
