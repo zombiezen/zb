@@ -40,6 +40,8 @@ func TestURLs(t *testing.T) {
 		fileName = filepath.Join(dir, fileName)
 
 		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
+
 			ctx := testcontext.New(t)
 			storeDir := backendtest.NewStoreDirectory(t)
 			archive, err := txtar.ParseFile(fileName)

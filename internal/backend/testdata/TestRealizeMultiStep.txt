@@ -1,0 +1,143 @@
+# Build second derivation.
+[x86_64] [linux] realize pvirhrv9a4i9p6hh4d9z0pwzb0xh3fsf-hello4.txt.drv
+[aarch64] [linux] realize zkk4f5k729dhx0w6vj8779vnbib304mb-hello4.txt.drv
+[aarch64] [macos] realize q283gmdjyrwhn32d935np2zyjvl8inah-hello4.txt.drv
+[x86_64] [windows] realize w8lksj9ni7d33m7v18623572jzfd9lrw-hello4.txt.drv
+
+# Check output.
+realpath $out
+read realOut
+grep '\AHello, World!\nHello, World!\nHello, World!\nHello, World!\n\z' $realOut
+
+-- jj24kz6i96lk2arql8642d84zsp210mv-hello.txt --
+Hello, World!
+-- 005w7ss1jkgdwk1138wwpd6s62v1dl9a-hello2.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [],
+  ["/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  ["-c","echo catcat >&2 ; while read line; do echo \"$line\"; done < $in > $out; while read line; do echo \"$line\"; done < $in >> $out"],
+  [
+    ("in", "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- 8mxgg6bd7z5br7grz82bm47lk3w25avq-hello2.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [
+    "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"
+  ],
+  "aarch64-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "echo catcat >&2 ; while read line; do echo \"$line\"; done < $in > $out; while read line; do echo \"$line\"; done < $in >> $out"
+  ],
+  [
+    ("in", "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- vpfywiz8s7i00kir1n658dj36m4077ja-hello2.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [
+    "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"
+  ],
+  "aarch64-apple-macos",
+  "/bin/sh",
+  [
+    "-c",
+    "echo catcat >&2 ; while read line; do echo \"$line\"; done < $in > $out; while read line; do echo \"$line\"; done < $in >> $out"
+  ],
+  [
+    ("in", "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- kblf67q43afh4yb1iby27ccwp6zhxyzk-hello2.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [],
+  ["C:\\zb\\store\\jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"],
+  "x86_64-pc-windows",
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  [
+    "-Command",
+    "Write-Output \"catcat\" ; $x = Get-Content -Raw ${env:in} ; ($x + $x) | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}"
+  ],
+  [
+    ("in", "C:\\zb\\store\\jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- pvirhrv9a4i9p6hh4d9z0pwzb0xh3fsf-hello4.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [("/opt/zb/store/005w7ss1jkgdwk1138wwpd6s62v1dl9a-hello2.txt.drv", ["out"])],
+  [],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  ["-c","echo catcat >&2 ; while read line; do echo \"$line\"; done < $in > $out; while read line; do echo \"$line\"; done < $in >> $out"],
+  [
+    ("in", "/1gyh1aw2sfl2czz76n1zplc428c2q92qpcljcx12ll23dcs4hmp8"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- zkk4f5k729dhx0w6vj8779vnbib304mb-hello4.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [
+    ("/opt/zb/store/8mxgg6bd7z5br7grz82bm47lk3w25avq-hello2.txt.drv", ["out"])
+  ],
+  [],
+  "aarch64-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "echo catcat >&2 ; while read line; do echo \"$line\"; done < $in > $out; while read line; do echo \"$line\"; done < $in >> $out"
+  ],
+  [
+    ("in", "/15jmp4f0ms78wgqpvgpsbdbnvbmm03h3fr8bhxdcajqvjg0pwbh8"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- q283gmdjyrwhn32d935np2zyjvl8inah-hello4.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [
+    ("/opt/zb/store/vpfywiz8s7i00kir1n658dj36m4077ja-hello2.txt.drv", ["out"])
+  ],
+  [],
+  "aarch64-apple-macos",
+  "/bin/sh",
+  [
+    "-c",
+    "echo catcat >&2 ; while read line; do echo \"$line\"; done < $in > $out; while read line; do echo \"$line\"; done < $in >> $out"
+  ],
+  [
+    ("in", "/011wwv5s0j5r09jbs16m7qkk9kds2j77148vl8xy8mw59yc68ial"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- w8lksj9ni7d33m7v18623572jzfd9lrw-hello4.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [("C:\\zb\\store\\kblf67q43afh4yb1iby27ccwp6zhxyzk-hello2.txt.drv", ["out"])],
+  [],
+  "x86_64-pc-windows",
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  [
+    "-Command",
+    "Write-Output \"catcat\" ; $x = Get-Content -Raw ${env:in} ; ($x + $x) | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}"
+  ],
+  [
+    ("in", "/0c600h8i8ac8ad1fk8q480r0rk7100bhjfpwzcqfzjh40c3sj87j"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)

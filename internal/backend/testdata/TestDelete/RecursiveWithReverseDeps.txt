@@ -1,0 +1,16 @@
+delete -r pwhla93a7ck76c9gf3jmy5d5w5v4vnad-ref.txt
+only i94i2wxv5x0x3bwlx9zxk0pgp0hh0xq8-hello.txt
+cmpinfo i94i2wxv5x0x3bwlx9zxk0pgp0hh0xq8-hello.txt
+! cmpinfo pwhla93a7ck76c9gf3jmy5d5w5v4vnad-ref.txt
+! cmpinfo xxx4s473wwm022mgsvdjr357dh4whghy-chain.txt
+! cmpinfo hvb3y9vhz056mvjjhcgqqhg6rz1piqhc-self.txt
+
+-- i94i2wxv5x0x3bwlx9zxk0pgp0hh0xq8-hello.txt --
+Hello, World!
+-- pwhla93a7ck76c9gf3jmy5d5w5v4vnad-ref.txt --
+i94i2wxv5x0x3bwlx9zxk0pgp0hh0xq8-hello.txt
+-- xxx4s473wwm022mgsvdjr357dh4whghy-chain.txt --
+pwhla93a7ck76c9gf3jmy5d5w5v4vnad-ref.txt
+-- hvb3y9vhz056mvjjhcgqqhg6rz1piqhc-self.txt --
+pwhla93a7ck76c9gf3jmy5d5w5v4vnad-ref.txt
+hvb3y9vhz056mvjjhcgqqhg6rz1piqhc-self.txt

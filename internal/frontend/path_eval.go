@@ -280,9 +280,7 @@ func (eval *Eval) toFileFunction(ctx context.Context, l *lua.State) (int, error)
 		return 0, err
 	}
 
-	h := nix.NewHasher(nix.SHA256)
-	h.WriteString(s)
-	var refs zbstore.References
+	possibleRefs := new(sets.Sorted[zbstore.Path])
 	for dep := range l.StringContext(2) {
 		c, err := parseContextString(dep)
 		if err != nil {
@@ -291,21 +289,19 @@ func (eval *Eval) toFileFunction(ctx context.Context, l *lua.State) (int, error)
 		if c.path == "" {
 			return 0, fmt.Errorf("toFile %q: cannot depend on derivation outputs", name)
 		}
-		refs.Others.Add(c.path)
+		possibleRefs.Add(c.path)
 	}
-
-	ca := nix.TextContentAddress(h.SumHash())
-	storePath, err := zbstore.FixedCAOutputPath(eval.storeDir, name, ca, refs)
+	blob, err := zbstore.NewTextBlob(eval.storeDir, name, []byte(s), possibleRefs)
 	if err != nil {
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
 
-	if _, err := eval.store.Object(ctx, storePath); err != nil {
+	if _, err := eval.store.Object(ctx, blob.StorePath); err != nil {
 		log.Debugf(ctx, "%v", err)
 	} else {
 		// Already exists: no need to re-import.
-		log.Debugf(ctx, "Using existing store path %s", storePath)
-		pushStorePath(l, storePath)
+		log.Debugf(ctx, "Using existing store path %s", blob.StorePath)
+		pushStorePath(l, blob.StorePath)
 		return 1, nil
 	}
 
@@ -314,38 +310,15 @@ func (eval *Eval) toFileFunction(ctx context.Context, l *lua.State) (int, error)
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
 	defer closeExport(false)
-	err = writeSingleFileNAR(exporter, strings.NewReader(s), int64(len(s)))
-	if err != nil {
-		return 0, fmt.Errorf("toFile %q: %v", name, err)
-	}
-	err = exporter.Trailer(&zbstore.ExportTrailer{
-		StorePath:      storePath,
-		References:     refs.Others,
-		ContentAddress: ca,
-	})
-	if err != nil {
+	if err := exporter.WriteObject(ctx, blob); err != nil {
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
 	if err := closeExport(true); err != nil {
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
 
-	pushStorePath(l, storePath)
+	pushStorePath(l, blob.StorePath)
 	return 1, nil
-}
-
-func writeSingleFileNAR(w io.Writer, r io.Reader, sz int64) error {
-	nw := nar.NewWriter(w)
-	if err := nw.WriteHeader(&nar.Header{Size: sz}); err != nil {
-		return err
-	}
-	if _, err := io.Copy(nw, r); err != nil {
-		return err
-	}
-	if err := nw.Close(); err != nil {
-		return err
-	}
-	return nil
 }
 
 // absSourcePath takes a source path passed as an argument from Lua to Go

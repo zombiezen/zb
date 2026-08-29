@@ -5,202 +5,148 @@
 package storetest
 
 import (
-	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 
 	"zb.256lights.llc/pkg/bytebuffer"
-	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
-	"zombiezen.com/go/nix"
-	"zombiezen.com/go/nix/nar"
 )
 
-// ExportFlatFile writes a fixed-hash flat file to the exporter with the given content.
-func ExportFlatFile(exp *zbstore.ExportWriter, dir zbstore.Directory, name string, data []byte, ht nix.HashType) (zbstore.Path, zbstore.ContentAddress, error) {
-	h := nix.NewHasher(ht)
-	h.Write(data)
-	ca := nix.FlatFileContentAddress(h.SumHash())
-	p, err := exportFile(exp, dir, name, data, ca, nil)
-	if err != nil {
-		if p == "" {
-			return "", ca, err
+// BlobReceiver implements [zbstore.NARReceiver]
+// by saving each object as a [*zbstore.Blob].
+// The zero value is ready to use.
+type BlobReceiver struct {
+	Blobs []*zbstore.Blob
+}
+
+// Write appends the byte slice to the last blob in r.Blobs.
+// If the last blob in r.Blobs already has a store path set,
+// then Write appends the byte slice to a new blob.
+func (r *BlobReceiver) Write(p []byte) (int, error) {
+	blob := r.writeBlob()
+	blob.NAR = append(blob.NAR, p...)
+	return len(p), nil
+}
+
+// ReceiveNAR copies the export trailer to the last blob in r.Blobs.
+// If the last blob in r.Blobs already has a store path set,
+// then ReceiveNAR copies the export trailer to a new blob.
+func (r *BlobReceiver) ReceiveNAR(t *zbstore.ExportTrailer) {
+	dst := r.writeBlob()
+	dst.ExportTrailer = *t
+	dst.References = *dst.References.Clone()
+}
+
+func (r *BlobReceiver) writeBlob() *zbstore.Blob {
+	if len(r.Blobs) == 0 || r.Blobs[len(r.Blobs)-1].StorePath != "" {
+		r.Blobs = append(r.Blobs, new(zbstore.Blob))
+	}
+	return r.Blobs[len(r.Blobs)-1]
+}
+
+// BlobSlice implements [zbstore.Store] and [zbstore.Importer]
+// for a slice of [*zbstore.Blob].
+// The zero value is an empty store.
+type BlobSlice []*zbstore.Blob
+
+// Object implements [zbstore.Store].
+func (slice BlobSlice) Object(ctx context.Context, path zbstore.Path) (zbstore.Object, error) {
+	// Iterate in forward order because WriteObject is supposed to no-op after a successful write.
+	for _, blob := range slice {
+		if blob.StorePath == path {
+			return blob, nil
 		}
-		return p, ca, fmt.Errorf("export flat file %s: %v", p, err)
 	}
-	return p, ca, nil
+	return nil, fmt.Errorf("open %s: %w", path, zbstore.ErrNotFound)
 }
 
-// ExportText writes a text file (e.g. a ".drv" file)
-// to the exporter with the given content.
-func ExportText(exp *zbstore.ExportWriter, dir zbstore.Directory, name string, data []byte, refs *sets.Sorted[zbstore.Path]) (zbstore.Path, zbstore.ContentAddress, error) {
-	h := nix.NewHasher(nix.SHA256)
-	h.Write(data)
-	ca := nix.TextContentAddress(h.SumHash())
-	trimmedRefs := trimRefs(data, zbstore.References{
-		Others: *refs.Clone(),
-	})
-	p, err := exportFile(exp, dir, name, data, ca, &trimmedRefs.Others)
+// WriteObject copies the object to a [*zbstore.Blob]
+// and appends it to the slice.
+func (slice *BlobSlice) WriteObject(ctx context.Context, object zbstore.Object) error {
+	w := blobWriter{slice: slice}
+	buf, err := w.CreateBuffer(-1)
 	if err != nil {
-		if p == "" {
-			return "", ca, err
-		}
-		return p, ca, fmt.Errorf("export text %s: %v", p, err)
-	}
-	return p, ca, nil
-}
-
-// ExportDerivation writes a ".drv" file to the exporter.
-func ExportDerivation(exp *zbstore.ExportWriter, drv *zbstore.Derivation) (zbstore.Path, zbstore.ContentAddress, error) {
-	name := drv.Name + zbstore.DerivationExt
-	data, err := drv.MarshalText()
-	if err != nil {
-		return "", zbstore.ContentAddress{}, fmt.Errorf("export derivation %s: %v", name, err)
-	}
-	h := nix.NewHasher(nix.SHA256)
-	h.Write(data)
-	ca := nix.TextContentAddress(h.SumHash())
-	refs := drv.References().ToSet("")
-	p, err := exportFile(exp, drv.Dir, name, data, ca, refs)
-	if err != nil {
-		if p == "" {
-			return "", ca, fmt.Errorf("export derivation %s: %v", name, err)
-		}
-		return p, ca, fmt.Errorf("export derivation %s: %v", p, err)
-	}
-	return p, ca, nil
-}
-
-func exportFile(exp *zbstore.ExportWriter, dir zbstore.Directory, name string, data []byte, ca zbstore.ContentAddress, refs *sets.Sorted[zbstore.Path]) (zbstore.Path, error) {
-	refsClone := *refs.Clone()
-	p, err := zbstore.FixedCAOutputPath(dir, name, ca, zbstore.References{Others: refsClone})
-	if err != nil {
-		return "", err
-	}
-	if err := SingleFileNAR(exp, data); err != nil {
-		return p, err
-	}
-	err = exp.Trailer(&zbstore.ExportTrailer{
-		StorePath:      p,
-		ContentAddress: ca,
-		References:     refsClone,
-	})
-	if err != nil {
-		return p, err
-	}
-	return p, nil
-}
-
-// SourceExportOptions is the set of common arguments to [ExportSourceFile], [ExportSourceDir], and [ExportSourceNAR].
-type SourceExportOptions struct {
-	Name       string
-	Directory  zbstore.Directory
-	References zbstore.References
-
-	// TempDigest is the placeholder digest used in the source's content for self references.
-	// TempDigest may be empty.
-	TempDigest string
-}
-
-// ExportSourceFile writes a file with the given content to the exporter.
-func ExportSourceFile(exp *zbstore.ExportWriter, data []byte, opts SourceExportOptions) (zbstore.Path, zbstore.ContentAddress, error) {
-	narBuffer := new(bytes.Buffer)
-	if err := SingleFileNAR(narBuffer, data); err != nil {
-		return "", zbstore.ContentAddress{}, err
-	}
-	return ExportSourceNAR(exp, narBuffer.Bytes(), opts)
-}
-
-// ExportSourceDir writes the given filesystem to the exporter.
-func ExportSourceDir(exp *zbstore.ExportWriter, fsys fs.FS, opts SourceExportOptions) (zbstore.Path, zbstore.ContentAddress, error) {
-	narBuffer := new(bytes.Buffer)
-	if err := new(nar.Dumper).Dump(narBuffer, fsys, "."); err != nil {
-		return "", zbstore.ContentAddress{}, err
-	}
-	return ExportSourceNAR(exp, narBuffer.Bytes(), opts)
-}
-
-// ExportSourceNAR writes narBytes to the exporter.
-func ExportSourceNAR(exp *zbstore.ExportWriter, narBytes []byte, opts SourceExportOptions) (zbstore.Path, zbstore.ContentAddress, error) {
-	if !opts.References.Self {
-		opts.TempDigest = ""
-	}
-	opts.References = trimRefs(narBytes, opts.References)
-
-	ca, analysis, err := zbstore.SourceSHA256ContentAddress(bytes.NewReader(narBytes), &zbstore.ContentAddressOptions{
-		Digest: opts.TempDigest,
-	})
-	if err != nil {
-		return "", zbstore.ContentAddress{}, err
-	}
-	p, err := zbstore.FixedCAOutputPath(opts.Directory, opts.Name, ca, opts.References)
-	if err != nil {
-		return "", ca, err
-	}
-
-	// Rewrite NAR in-place.
-	newDigest := p.Digest()
-	if opts.TempDigest != "" && len(opts.TempDigest) != len(newDigest) {
-		return p, ca, fmt.Errorf("export source %s: temporary digest %q is wrong size (expected %d)", p, opts.TempDigest, len(newDigest))
-	}
-	if err := zbstore.Rewrite(bytebuffer.New(narBytes), 0, newDigest, analysis.Rewrites); err != nil {
-		return p, ca, fmt.Errorf("export source %s: %v", p, err)
-	}
-
-	if _, err := exp.Write(narBytes); err != nil {
-		return p, ca, fmt.Errorf("export source %s: %v", p, err)
-	}
-	err = exp.Trailer(&zbstore.ExportTrailer{
-		StorePath:      p,
-		ContentAddress: ca,
-		References:     *opts.References.ToSet(p),
-	})
-	if err != nil {
-		return p, ca, fmt.Errorf("export source %s: %v", p, err)
-	}
-	return p, ca, nil
-}
-
-// SingleFileNAR writes a single non-executable file NAR to the given writer
-// with the given file contents.
-func SingleFileNAR(w io.Writer, data []byte) error {
-	nw := nar.NewWriter(w)
-	if err := nw.WriteHeader(&nar.Header{Size: int64(len(data))}); err != nil {
 		return err
 	}
-	if _, err := nw.Write(data); err != nil {
+	if err := object.WriteNAR(ctx, buf); err != nil {
 		return err
 	}
-	if err := nw.Close(); err != nil {
-		return err
+	return w.WriteObject(ctx, object)
+}
+
+// StoreImport implements [zbstore.Importer]
+// by appending the objects unmarshaled from r into the slice.
+func (slice *BlobSlice) StoreImport(ctx context.Context, r io.Reader) error {
+	recv := new(BlobReceiver)
+	err := zbstore.ReceiveExport(recv, r)
+	*slice = append(*slice, recv.Blobs...)
+	return err
+}
+
+type blobWriter struct {
+	slice  *BlobSlice
+	buffer *singleUseBuffer
+}
+
+func (w *blobWriter) CreateBuffer(size int64) (bytebuffer.ReadWriteSeekCloser, error) {
+	w.buffer = new(singleUseBuffer)
+	return w.buffer, nil
+}
+
+// WriteObject appends a new object to the slice,
+// using the byte slice from the buffer in the last call to [*blobSliceWriter.CreateBuffer] for the NAR
+// instead of calling object.WriteNAR.
+func (w *blobWriter) WriteObject(ctx context.Context, object zbstore.Object) error {
+	if w.buffer == nil {
+		return errors.New("store import did not create a buffer")
+	}
+	info := object.Info()
+	*w.slice = append(*w.slice, &zbstore.Blob{
+		NAR:           w.buffer.Bytes(),
+		NARHash:       info.NARHash,
+		ExportTrailer: *info.ExportTrailer(),
+	})
+
+	w.buffer.done = true
+	w.buffer = nil
+	return nil
+}
+
+type singleUseBuffer struct {
+	bytebuffer.Buffer
+	done bool
+}
+
+func (bb *singleUseBuffer) check() error {
+	if bb.done {
+		return errors.New("buffer in use")
 	}
 	return nil
 }
 
-func trimRefs(data []byte, refs zbstore.References) zbstore.References {
-	firstMissing := -1
-	for i, ref := range refs.Others.All() {
-		if !bytes.Contains(data, []byte(ref.Digest())) {
-			firstMissing = i
-			break
-		}
+func (bb *singleUseBuffer) Read(p []byte) (int, error) {
+	if err := bb.check(); err != nil {
+		return 0, err
 	}
-	if firstMissing == -1 {
-		return refs
-	}
+	return bb.Buffer.Read(p)
+}
 
-	newRefs := zbstore.References{
-		Self: refs.Self,
+func (bb *singleUseBuffer) Write(p []byte) (int, error) {
+	if err := bb.check(); err != nil {
+		return 0, err
 	}
-	newRefs.Others.Grow(refs.Others.Len() - 1)
-	for i, ref := range refs.Others.All() {
-		if i == firstMissing {
-			continue
-		}
-		if i < firstMissing || bytes.Contains(data, []byte(ref.Digest())) {
-			newRefs.Others.Add(ref)
-		}
+	return bb.Buffer.Write(p)
+}
+
+func (bb *singleUseBuffer) Seek(offset int64, whence int) (int64, error) {
+	if err := bb.check(); err != nil {
+		return 0, err
 	}
-	return newRefs
+	return bb.Buffer.Seek(offset, whence)
+}
+
+func (bb *singleUseBuffer) Close() error {
+	return nil
 }

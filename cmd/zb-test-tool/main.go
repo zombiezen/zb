@@ -24,6 +24,7 @@ import (
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
+	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nixbase32"
 )
 
@@ -42,6 +43,9 @@ func main() {
 		kong.Name("zb-test-tool"),
 		kong.Description("Utilities for testing zb"),
 		kong.Bind(c),
+		kong.Vars{
+			"directory": string(zbstore.DefaultDirectory()),
+		},
 	)
 	kongcompletion.Register(k)
 
@@ -88,6 +92,7 @@ type derivationCommand struct {
 	InputPlaceholder  *derivationInputPlaceholderCommand  `kong:"cmd"`
 	OutputPlaceholder *derivationOutputPlaceholderCommand `kong:"cmd"`
 	Format            *derivationFormatCommand            `kong:"cmd,aliases='fmt'"`
+	FixedOutput       *derivationFixedOutputCommand       `kong:"cmd"`
 }
 
 type derivationInputPlaceholderCommand struct {
@@ -178,6 +183,27 @@ func (c *derivationFormatCommand) Run(kc *kong.Context) error {
 	return nil
 }
 
+type derivationFixedOutputCommand struct {
+	Name string   `kong:"arg,help=Filename of the derivation without a digest."`
+	Hash nix.Hash `kong:"arg,help=Hash of the file."`
+
+	Directory zbstore.Directory `kong:"name=dir,default=${directory},help=Compute for the store directory."`
+}
+
+func (c *derivationFixedOutputCommand) Signature() string {
+	return `kong:"cmd,help=Print the output path for a fixed-output derivation."`
+}
+
+func (c *derivationFixedOutputCommand) Run(kc *kong.Context) error {
+	ca := nix.FlatFileContentAddress(c.Hash)
+	path, err := zbstore.FixedCAOutputPath(c.Directory, c.Name, ca, zbstore.References{})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(kc.Stdout, path)
+	return nil
+}
+
 type txtarCommand struct {
 	FillSystems *txtarFillSystemsCommand `kong:"cmd"`
 }
@@ -215,62 +241,78 @@ func (c *txtarFillSystemsCommand) Run(kc *kong.Context) error {
 		return err
 	}
 	archive := txtar.Parse(originalData)
-	var archiveFileNames iter.Seq[string] = func(yield func(string) bool) {
+	derivations := make(map[zbstore.Path]*zbstore.Derivation)
+	for _, curr := range archive.Files {
+		fakePath, err := zbstore.DefaultUnixDirectory.Object(curr.Name)
+		if err != nil {
+			continue
+		}
+		drvName, isDrv := fakePath.DerivationName()
+		if !isDrv {
+			continue
+		}
+		drvData, err := storetest.MinimizeDerivation(curr.Data)
+		if err != nil {
+			return fmt.Errorf("%s: %v", curr.Name, err)
+		}
+		drv := &zbstore.Derivation{Name: drvName}
+		if err := drv.UnmarshalText(drvData); err != nil {
+			return fmt.Errorf("%s: %v", curr.Name, err)
+		}
+		drv.Dir, err = inferDerivationDirectory(drv)
+		if err != nil {
+			return fmt.Errorf("%s: %v", curr.Name, err)
+		}
+		drvPath, err := drv.Dir.Object(curr.Name)
+		if err != nil {
+			return fmt.Errorf("%s: %v", curr.Name, err)
+		}
+		derivations[drvPath] = drv
+	}
+
+	var derivationSequence iter.Seq[*zbstore.Derivation] = func(yield func(*zbstore.Derivation) bool) {
 		for _, file := range archive.Files {
-			if !yield(file.Name) {
-				return
+			drv := derivationForFileName(derivations, file.Name)
+			if drv != nil {
+				if !yield(drv) {
+					return
+				}
 			}
 		}
 	}
 	for i := 0; i < len(archive.Files); i++ {
 		curr := archive.Files[i]
-		_, base, _, currSystem, isDrv := splitDerivationFileName(curr.Name)
-		if !isDrv {
+		drv := derivationForFileName(derivations, curr.Name)
+		if drv == nil {
 			continue
 		}
 
 		for _, wantSystem := range c.Systems {
-			if wantSystem == currSystem {
-				continue
-			}
-			hasWantedSystem := slices.ContainsFunc(archive.Files, func(file txtar.File) bool {
-				_, otherBase, _, otherSystem, isDrv := splitDerivationFileName(file.Name)
-				if !isDrv {
-					return false
-				}
-				return otherBase == base && otherSystem == wantSystem
-			})
+			hasWantedSystem := derivationForSystem(derivationSequence, drv.Name, func(sys system.System) bool {
+				return sys == wantSystem
+			}) != nil
 			if hasWantedSystem {
 				continue
 			}
-
-			templateFileIndex := slices.IndexFunc(archive.Files, func(file txtar.File) bool {
-				_, otherBase, _, otherSystem, isDrv := splitDerivationFileName(file.Name)
-				if !isDrv {
-					return false
-				}
-				return otherBase == base && wantSystem.OS.IsWindows() == otherSystem.OS.IsWindows()
+			templateFile := derivationForSystem(derivationSequence, drv.Name, func(sys system.System) bool {
+				return wantSystem.OS.IsWindows() == sys.OS.IsWindows()
 			})
-			templateFile := curr
-			if templateFileIndex != -1 {
-				templateFile = archive.Files[templateFileIndex]
+			if templateFile == nil {
+				templateFile = drv
 			}
 
-			templateDrvData, err := storetest.MinimizeDerivation(templateFile.Data)
+			newDrv := rewriteDerivationForSystem(drv, wantSystem, derivations)
+			base := string(appendNewDigest(nil)) + "-" + newDrv.Name + zbstore.DerivationExt
+			newDrvPath, err := newDrv.Dir.Object(base)
 			if err != nil {
-				return fmt.Errorf("%s: %v", templateFile.Name, err)
+				return err
 			}
-			_, _, templateSystemString, _, _ := splitDerivationFileName(templateFile.Name)
-			templateDrvName := joinDerivationName(base, templateSystemString)
-			drv := &zbstore.Derivation{Name: templateDrvName}
-			if err := drv.UnmarshalText(templateDrvData); err != nil {
-				return fmt.Errorf("%s: %v", templateFile.Name, err)
-			}
-			drv = rewriteDerivationForSystem(drv, wantSystem, archiveFileNames)
+			derivations[newDrvPath] = newDrv
+
 			i++
 			archive.Files = slices.Insert(archive.Files, i, txtar.File{
-				Name: joinDerivationFileName(string(appendNewDigest(nil)), base, wantSystem),
-				Data: marshalIndentDerivation(drv),
+				Name: base,
+				Data: marshalIndentDerivation(newDrv),
 			})
 		}
 	}
@@ -297,11 +339,49 @@ func (c *txtarFillSystemsCommand) Run(kc *kong.Context) error {
 	return nil
 }
 
-func rewriteDerivationForSystem(drv *zbstore.Derivation, wantSystem system.System, existingNames iter.Seq[string]) *zbstore.Derivation {
-	fakeFileName := strings.Repeat("a", objectDigestSize) + "-" + drv.Name + zbstore.DerivationExt
-	_, base, _, originalSystem, ok := splitDerivationFileName(fakeFileName)
-	if !ok {
-		panic("derivation name bad")
+func inferDerivationDirectory(drv *zbstore.Derivation) (zbstore.Directory, error) {
+	if drv.Dir != "" {
+		return drv.Dir, nil
+	}
+	sys, err := system.Parse(drv.System)
+	if err != nil {
+		return "", fmt.Errorf("infer directory: %v", err)
+	}
+	switch {
+	case sys.OS.IsWindows():
+		return zbstore.DefaultWindowsDirectory, nil
+	case sys.OS.IsDarwin() || sys.OS.IsLinux():
+		return zbstore.DefaultUnixDirectory, nil
+	default:
+		return "", fmt.Errorf("infer directory: unknown system %s", drv.System)
+	}
+}
+
+func derivationForSystem(derivations iter.Seq[*zbstore.Derivation], drvName string, f func(system.System) bool) *zbstore.Derivation {
+	for drv := range derivations {
+		if drv.Name != drvName {
+			continue
+		}
+		if drvSystem, err := system.Parse(drv.System); err == nil && f(drvSystem) {
+			return drv
+		}
+	}
+	return nil
+}
+
+func derivationForFileName(derivations map[zbstore.Path]*zbstore.Derivation, name string) *zbstore.Derivation {
+	for drvPath, drv := range derivations {
+		if drvPath.Base() == name {
+			return drv
+		}
+	}
+	return nil
+}
+
+func rewriteDerivationForSystem(drv *zbstore.Derivation, wantSystem system.System, others map[zbstore.Path]*zbstore.Derivation) *zbstore.Derivation {
+	originalSystem, err := system.Parse(drv.System)
+	if err != nil {
+		panic(err)
 	}
 
 	var wantDirectory zbstore.Directory
@@ -327,23 +407,19 @@ func rewriteDerivationForSystem(drv *zbstore.Derivation, wantSystem system.Syste
 
 	newInputDerivations := make(map[zbstore.Path]*sets.Sorted[string])
 	for oldDrvPath, outputNames := range drv.InputDerivations {
-		_, inputBase, _, _, matchesPattern := splitDerivationFileName(oldDrvPath.Base())
-		if !matchesPattern {
+		oldDrv := others[oldDrvPath]
+		if oldDrv == nil {
 			newInputDerivations[oldDrvPath] = outputNames
 			continue
 		}
 		var newDrvPath zbstore.Path
-		for other := range existingNames {
-			_, otherBase, _, otherSystem, otherMatchesPattern := splitDerivationFileName(other)
-			if !otherMatchesPattern {
+		for otherDrvPath, other := range others {
+			otherSystem, err := system.Parse(other.System)
+			if err != nil {
 				continue
 			}
-			if otherBase == inputBase && otherSystem == wantSystem {
-				var err error
-				newDrvPath, err = wantDirectory.Object(other)
-				if err != nil {
-					panic(err)
-				}
+			if otherDrvPath.Name() == oldDrvPath.Name() && otherSystem == wantSystem {
+				newDrvPath = otherDrvPath
 				break
 			}
 		}
@@ -370,62 +446,10 @@ func rewriteDerivationForSystem(drv *zbstore.Derivation, wantSystem system.Syste
 
 	newDrv := drv.ReplaceStrings(strings.NewReplacer(replacements...))
 	newDrv.Dir = wantDirectory
-	newDrv.Name = joinDerivationName(base, wantSystem.String())
 	newDrv.System = wantSystem.String()
 	newDrv.InputSources = newInputSources
 	newDrv.InputDerivations = newInputDerivations
 	return newDrv
-}
-
-func splitDerivationFileName(name string) (digest, base, sysString string, sys system.System, ok bool) {
-	if len(name) < objectDigestSize+len("-") ||
-		nixbase32.ValidateString(name[:objectDigestSize]) != nil ||
-		name[objectDigestSize] != '-' {
-		return "", "", "", system.System{}, false
-	}
-	digest = name[:objectDigestSize]
-	name = name[objectDigestSize+len("-"):]
-
-	drvName, isDrv := strings.CutSuffix(name, zbstore.DerivationExt)
-	if !isDrv || strings.Contains(drvName, "/") {
-		return "", "", "", system.System{}, false
-	}
-	extStart := strings.LastIndexByte(drvName, '.')
-	if extStart == -1 {
-		extStart = len(drvName)
-	}
-	base = drvName[:extStart]
-	ext := drvName[extStart:]
-	for _, arch := range knownArchitectures {
-		hyphenIndex := strings.LastIndex(base, "-"+string(arch))
-		if hyphenIndex == -1 {
-			continue
-		}
-		sysString = base[hyphenIndex+1:]
-		var err error
-		sys, err = system.Parse(sysString)
-		if err == nil {
-			return digest, base[:hyphenIndex] + ext, sysString, sys, true
-		}
-	}
-	return "", "", "", system.System{}, false
-}
-
-var knownArchitectures = [...]system.Architecture{
-	"x86_64",
-	"aarch64",
-}
-
-func joinDerivationName(base, sysString string) string {
-	extStart := strings.LastIndexByte(base, '.')
-	if extStart == -1 {
-		extStart = len(base)
-	}
-	return base[:extStart] + "-" + sysString + base[extStart:]
-}
-
-func joinDerivationFileName(digest, base string, sys system.System) string {
-	return digest + "-" + joinDerivationName(base, sys.String()) + zbstore.DerivationExt
 }
 
 func marshalIndentDerivation(drv *zbstore.Derivation) []byte {

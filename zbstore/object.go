@@ -4,7 +4,9 @@
 package zbstore
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 
@@ -34,6 +36,41 @@ type Blob struct {
 	// ExportTrailer is the blob's metadata.
 	// Deriver is ignored.
 	ExportTrailer
+}
+
+// NewTextBlob creates a text file (e.g. a ".drv" file).
+// The references in the blob will be filtered down to those that appear in the data.
+func NewTextBlob(dir Directory, name string, data []byte, possibleRefs *sets.Sorted[Path]) (*Blob, error) {
+	blob := &Blob{
+		ExportTrailer: ExportTrailer{
+			ContentAddress: nix.TextContentAddress(nix.NewHash(nix.SHA256, new(sha256.Sum256(data))[:])),
+		},
+	}
+	for _, ref := range possibleRefs.All() {
+		if bytes.Contains(data, []byte(ref.Digest())) {
+			blob.References.Add(ref)
+		}
+	}
+	var err error
+	blob.StorePath, err = FixedCAOutputPath(dir, name, blob.ContentAddress, References{
+		Others: blob.References,
+	})
+	if err != nil {
+		return nil, err
+	}
+	buf := new(bytes.Buffer)
+	nw := nar.NewWriter(buf)
+	if err := nw.WriteHeader(&nar.Header{Size: int64(len(data))}); err != nil {
+		return nil, err
+	}
+	if _, err := nw.Write(data); err != nil {
+		return nil, err
+	}
+	if err := nw.Close(); err != nil {
+		return nil, err
+	}
+	blob.NAR = buf.Bytes()
+	return blob, nil
 }
 
 // WriteNAR writes blob.NAR to w.

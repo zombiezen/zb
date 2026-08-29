@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"golang.org/x/tools/txtar"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
@@ -296,18 +297,24 @@ func TestImportExitStore(t *testing.T) {
 }
 
 func TestStorePath(t *testing.T) {
+	archive := txtar.Parse([]byte("" +
+		"-- jj24kz6i96lk2arql8642d84zsp210mv-hello.txt --\n" +
+		"Hello, World!\n"))
+
 	t.Run("ExistsLocally", func(t *testing.T) {
 		ctx := testcontext.New(t)
 
 		storeDir := backendtest.NewStoreDirectory(t)
-		exportBuffer := new(bytes.Buffer)
-		exporter := zbstore.NewExportWriter(exportBuffer)
-		wantPath, _, err := storetest.ExportSourceFile(exporter, []byte("Hello, World!\n"), storetest.SourceExportOptions{
-			Name:      "hello.txt",
-			Directory: storeDir,
-		})
+		objects, _, err := storetest.TxtarObjects(storeDir, archive.Files)
 		if err != nil {
 			t.Fatal(err)
+		}
+		exportBuffer := new(bytes.Buffer)
+		exporter := zbstore.NewExportWriter(exportBuffer)
+		for _, object := range objects {
+			if err := exporter.WriteObject(ctx, object); err != nil {
+				t.Fatal(err)
+			}
 		}
 		if err := exporter.Close(); err != nil {
 			t.Fatal(err)
@@ -341,6 +348,7 @@ func TestStorePath(t *testing.T) {
 			}
 		}()
 
+		wantPath := objects[0].StorePath
 		got, err := eval.Expression(ctx, "storePath("+lualex.Quote(string(wantPath))+")", system.Current())
 		if err != nil {
 			t.Fatal(err)
@@ -354,14 +362,16 @@ func TestStorePath(t *testing.T) {
 		ctx := testcontext.New(t)
 
 		storeDir := backendtest.NewStoreDirectory(t)
-		exportBuffer := new(bytes.Buffer)
-		exporter := zbstore.NewExportWriter(exportBuffer)
-		wantPath, _, err := storetest.ExportSourceFile(exporter, []byte("Hello, World!\n"), storetest.SourceExportOptions{
-			Name:      "hello.txt",
-			Directory: storeDir,
-		})
+		objects, _, err := storetest.TxtarObjects(storeDir, archive.Files)
 		if err != nil {
 			t.Fatal(err)
+		}
+		exportBuffer := new(bytes.Buffer)
+		exporter := zbstore.NewExportWriter(exportBuffer)
+		for _, object := range objects {
+			if err := exporter.WriteObject(ctx, object); err != nil {
+				t.Fatal(err)
+			}
 		}
 		if err := exporter.Close(); err != nil {
 			t.Fatal(err)
@@ -398,6 +408,7 @@ func TestStorePath(t *testing.T) {
 			}
 		}()
 
+		wantPath := objects[0].StorePath
 		got, err := eval.Expression(ctx, "storePath("+lualex.Quote(string(wantPath))+")", system.Current())
 		if err != nil {
 			t.Fatal(err)

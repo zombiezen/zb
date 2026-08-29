@@ -24,7 +24,7 @@ buildGoModule {
 
   src = ./.;
 
-  vendorHash = "sha256-tmqhmgjz0JBzZRx8Ad5kZDao4P1/FpwlGhgcqdrbtMk=";
+  vendorHash = "sha256-YHTIveON3H1m9Q6/IEeZnDNMIUPnobpJYb48vovrozU=";
   goSum = builtins.readFile ./go.sum;
 
   postInstall = ''

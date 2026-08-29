@@ -1,0 +1,69 @@
+[x86_64] [linux] ! realize qra1g93r8fgfym0v2rzbcpmngwg0843p-failure.txt.drv
+[aarch64] [linux] ! realize 2f36avj54my8f2d7ji2lkmzrz5177l1j-failure.txt.drv
+[aarch64] [macos] ! realize 088asljpky2lpbl0z3rpnljs957ag9ls-failure.txt.drv
+[x86_64] [windows] ! realize 8lix97gyvz8iywwc0da8f4sagk5gqvs3-failure.txt.drv
+
+stdout 'exit status'
+
+only qra1g93r8fgfym0v2rzbcpmngwg0843p-failure.txt.drv 2f36avj54my8f2d7ji2lkmzrz5177l1j-failure.txt.drv 088asljpky2lpbl0z3rpnljs957ag9ls-failure.txt.drv 8lix97gyvz8iywwc0da8f4sagk5gqvs3-failure.txt.drv
+
+-- qra1g93r8fgfym0v2rzbcpmngwg0843p-failure.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [],
+  [],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "echo > $out ; exit 1"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- 2f36avj54my8f2d7ji2lkmzrz5177l1j-failure.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [],
+  "aarch64-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "echo > $out ; exit 1"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- 088asljpky2lpbl0z3rpnljs957ag9ls-failure.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [],
+  "aarch64-apple-macos",
+  "/bin/sh",
+  [
+    "-c",
+    "echo > $out ; exit 1"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- 8lix97gyvz8iywwc0da8f4sagk5gqvs3-failure.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [],
+  [],
+  "x86_64-pc-windows",
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  [
+    "-Command",
+    "New-Item ${env:out} -type file ; exit 1"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)

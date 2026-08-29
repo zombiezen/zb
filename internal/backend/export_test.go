@@ -6,10 +6,13 @@ package backend_test
 import (
 	"bytes"
 	stdcmp "cmp"
+	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"golang.org/x/tools/txtar"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
@@ -76,59 +79,26 @@ func TestExport(t *testing.T) {
 		},
 	}
 
-	generateImport := func(dir zbstore.Directory) ([]narRecord, []byte, error) {
-		const fileContent = "Hello, World!\n"
+	generateImport := func(dir zbstore.Directory) ([]*zbstore.Blob, []byte, error) {
+		ar, err := txtar.ParseFile(filepath.Join("testdata", "TestExport.txt"))
+		if err != nil {
+			return nil, nil, err
+		}
+		objects, _, err := storetest.TxtarObjects(dir, ar.Files)
+		if err != nil {
+			return nil, nil, err
+		}
 		exportBuffer := new(bytes.Buffer)
 		exporter := zbstore.NewExportWriter(exportBuffer)
-		result := make([]narRecord, 4)
-		var err error
-		result[noDepsPath], err = exportSourceFile(exporter, []byte(fileContent), storetest.SourceExportOptions{
-			Name:      "hello.txt",
-			Directory: dir,
-		})
-		if err != nil {
-			return nil, nil, err
+		for _, obj := range objects {
+			if err := exporter.WriteObject(context.Background(), obj); err != nil {
+				return nil, nil, err
+			}
 		}
-		directDependencyContent := "Hello, " + result[noDepsPath].trailer.StorePath.Base() + "\n"
-		result[directDependencyPath], err = exportSourceFile(exporter, []byte(directDependencyContent), storetest.SourceExportOptions{
-			Name:      "a.txt",
-			Directory: dir,
-			References: zbstore.References{
-				Others: *sets.NewSorted(result[noDepsPath].trailer.StorePath),
-			},
-		})
-		if err != nil {
-			return nil, nil, err
-		}
-		indirectDependencyContent := "Hello, " + result[directDependencyPath].trailer.StorePath.Base() + "\n"
-		result[indirectDependencyPath], err = exportSourceFile(exporter, []byte(indirectDependencyContent), storetest.SourceExportOptions{
-			Name:      "b.txt",
-			Directory: dir,
-			References: zbstore.References{
-				Others: *sets.NewSorted(result[directDependencyPath].trailer.StorePath),
-			},
-		})
-		if err != nil {
-			return nil, nil, err
-		}
-		const tempDigest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-		const selfDependencyContent = "I am " + tempDigest + "-self.txt\n"
-		result[selfDependencyPath], err = exportSourceFile(exporter, []byte(selfDependencyContent), storetest.SourceExportOptions{
-			Name:       "self.txt",
-			Directory:  dir,
-			TempDigest: tempDigest,
-			References: zbstore.References{
-				Self: true,
-			},
-		})
-		if err != nil {
-			return nil, nil, err
-		}
-
 		if err := exporter.Close(); err != nil {
 			return nil, nil, err
 		}
-		return result, exportBuffer.Bytes(), nil
+		return objects, exportBuffer.Bytes(), nil
 	}
 
 	for _, test := range tests {
@@ -142,7 +112,7 @@ func TestExport(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				receiver := new(spyNARReceiver)
+				receiver := new(storetest.BlobReceiver)
 				_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 					TempDir: t.TempDir(),
 					ClientOptions: zbstorerpc.CodecOptions{
@@ -167,7 +137,7 @@ func TestExport(t *testing.T) {
 				// Call exists method.
 				// Exports don't send a response, so this introduces a sync point.
 				var exists bool
-				lastPath := records[len(records)-1].trailer.StorePath
+				lastPath := records[len(records)-1].StorePath
 				err = jsonrpc.Do(ctx, client, zbstorerpc.ExistsMethod, &exists, &zbstorerpc.ExistsRequest{
 					Path: string(lastPath),
 				})
@@ -184,21 +154,20 @@ func TestExport(t *testing.T) {
 					ExcludeReferences: test.excludeReferences,
 				}
 				for i, pathIndex := range test.paths {
-					req.Paths[i] = records[pathIndex].trailer.StorePath
+					req.Paths[i] = records[pathIndex].StorePath
 				}
 				if err := jsonrpc.Do(ctx, client, zbstorerpc.ExportMethod, nil, req); err != nil {
 					t.Error("Export:", err)
 				}
 
 				// Check contents of export.
-				want := make([]narRecord, len(test.want))
+				want := make([]*zbstore.Blob, len(test.want))
 				for i, pathIndex := range test.want {
 					want[i] = records[pathIndex]
 				}
 				diff := cmp.Diff(
-					want, receiver.records,
+					want, receiver.Blobs,
 					cmpopts.EquateEmpty(),
-					cmp.AllowUnexported(narRecord{}),
 					transformSortedSet[zbstore.Path](),
 				)
 				if diff != "" {
@@ -255,7 +224,7 @@ func TestExport(t *testing.T) {
 					// Call exists method.
 					// Exports don't send a response, so this introduces a sync point.
 					var exists bool
-					lastPath := records[len(records)-1].trailer.StorePath
+					lastPath := records[len(records)-1].StorePath
 					err = jsonrpc.Do(ctx, client, zbstorerpc.ExistsMethod, &exists, &zbstorerpc.ExistsRequest{
 						Path: string(lastPath),
 					})
@@ -273,25 +242,24 @@ func TestExport(t *testing.T) {
 						ExcludeReferences: test.excludeReferences,
 					}
 					for i, pathIndex := range test.paths {
-						req.Paths[i] = records[pathIndex].trailer.StorePath
+						req.Paths[i] = records[pathIndex].StorePath
 					}
 					if err := srv.Export(ctx, got, req); err != nil {
 						t.Error("Export:", err)
 					}
 
 					// Check contents of export.
-					receiver := new(spyNARReceiver)
+					receiver := new(storetest.BlobReceiver)
 					if err := zbstore.ReceiveExport(receiver, got); err != nil {
 						t.Error("Read export:", err)
 					}
-					want := make([]narRecord, len(test.want))
+					want := make([]*zbstore.Blob, len(test.want))
 					for i, pathIndex := range test.want {
 						want[i] = records[pathIndex]
 					}
 					diff := cmp.Diff(
-						want, receiver.records,
+						want, receiver.Blobs,
 						cmpopts.EquateEmpty(),
-						cmp.AllowUnexported(narRecord{}),
 						transformSortedSet[zbstore.Path](),
 					)
 					if diff != "" {
@@ -301,49 +269,6 @@ func TestExport(t *testing.T) {
 			}
 		})
 	}
-}
-
-type narRecord struct {
-	nar     []byte
-	trailer zbstore.ExportTrailer
-}
-
-func exportSourceFile(exp *zbstore.ExportWriter, data []byte, opts storetest.SourceExportOptions) (narRecord, error) {
-	narBuffer := new(bytes.Buffer)
-	if err := storetest.SingleFileNAR(narBuffer, data); err != nil {
-		return narRecord{}, err
-	}
-	path, ca, err := storetest.ExportSourceNAR(exp, narBuffer.Bytes(), opts)
-	if err != nil {
-		return narRecord{}, err
-	}
-	return narRecord{
-		nar: narBuffer.Bytes(),
-		trailer: zbstore.ExportTrailer{
-			StorePath:      path,
-			References:     *opts.References.ToSet(path),
-			ContentAddress: ca,
-		},
-	}, nil
-}
-
-type spyNARReceiver struct {
-	records []narRecord
-}
-
-func (r *spyNARReceiver) Write(p []byte) (int, error) {
-	if len(r.records) == 0 || r.records[len(r.records)-1].trailer.StorePath != "" {
-		r.records = append(r.records, narRecord{})
-	}
-	record := &r.records[len(r.records)-1]
-	record.nar = append(record.nar, p...)
-	return len(p), nil
-}
-
-func (r *spyNARReceiver) ReceiveNAR(t *zbstore.ExportTrailer) {
-	dst := &r.records[len(r.records)-1].trailer
-	*dst = *t
-	dst.References = *dst.References.Clone()
 }
 
 func transformSortedSet[E stdcmp.Ordered]() cmp.Option {

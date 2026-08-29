@@ -1,0 +1,66 @@
+[x86_64] [linux] ! realize cbs3qnplk5nlygm9l4xkml806vr972vi-no-out.txt.drv
+[aarch64] [linux] ! realize jp3jjp8j6wrj2bcg4l02vkp7hj5k3nqs-no-out.txt.drv
+[aarch64] [macos] ! realize 9af7ryxws5z66v53hry0jpn3ma9ir08s-no-out.txt.drv
+[x86_64] [windows] ! realize gzphjy6l9xhf1f2hmgg0icr8pkc89d04-no-out.txt.drv
+
+stdout 'failed to produce output \$out'
+
+only cbs3qnplk5nlygm9l4xkml806vr972vi-no-out.txt.drv jp3jjp8j6wrj2bcg4l02vkp7hj5k3nqs-no-out.txt.drv 9af7ryxws5z66v53hry0jpn3ma9ir08s-no-out.txt.drv gzphjy6l9xhf1f2hmgg0icr8pkc89d04-no-out.txt.drv
+
+-- cbs3qnplk5nlygm9l4xkml806vr972vi-no-out.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [],
+  [],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  ["-c", ":"],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- jp3jjp8j6wrj2bcg4l02vkp7hj5k3nqs-no-out.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [],
+  "aarch64-linux",
+  "/bin/sh",
+  [
+    "-c",
+    ":"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- 9af7ryxws5z66v53hry0jpn3ma9ir08s-no-out.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [],
+  "aarch64-apple-macos",
+  "/bin/sh",
+  [
+    "-c",
+    ":"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- gzphjy6l9xhf1f2hmgg0icr8pkc89d04-no-out.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [],
+  [],
+  "x86_64-pc-windows",
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  [
+    "-Command",
+    "exit"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)

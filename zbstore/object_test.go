@@ -222,21 +222,12 @@ func TestVerifyObject(t *testing.T) {
 
 	t.Run("TextFile", func(t *testing.T) {
 		const content = "Hello, World!\n"
-		narData := singleFileNAR(t, []byte(content))
-		sum := sha256.Sum256([]byte(content))
-		ca := nix.TextContentAddress(nix.NewHash(nix.SHA256, sum[:]))
-		path, err := FixedCAOutputPath(DefaultUnixDirectory, "hello.txt", ca, References{})
+		blob, err := NewTextBlob(DefaultUnixDirectory, "hello.txt", []byte(content), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		verifyValidObject(t, &fakeObject{
-			nar: narData,
-			info: ObjectInfo{
-				StorePath:      path,
-				ContentAddress: ca,
-			},
-		})
+		verifyValidObject(t, blob)
 	})
 
 	t.Run("MismatchedContentAddress", func(t *testing.T) {

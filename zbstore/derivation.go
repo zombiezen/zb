@@ -123,35 +123,7 @@ func (drv *Derivation) Export(hashType nix.HashType) (*Blob, error) {
 	if err != nil {
 		return nil, err
 	}
-	narBuffer := new(bytes.Buffer)
-	narHasher := nix.NewHasher(hashType)
-	nw := nar.NewWriter(io.MultiWriter(narHasher, narBuffer))
-	if err := nw.WriteHeader(&nar.Header{Size: int64(len(drvBytes))}); err != nil {
-		return nil, fmt.Errorf("export derivation %s: %v", drv.Name, err)
-	}
-	if _, err := nw.Write(drvBytes); err != nil {
-		return nil, fmt.Errorf("export derivation %s: %v", drv.Name, err)
-	}
-	if err := nw.Close(); err != nil {
-		return nil, fmt.Errorf("export derivation %s: %v", drv.Name, err)
-	}
-
-	caHasher := nix.NewHasher(hashType)
-	caHasher.Write(drvBytes)
-	blob := &Blob{
-		NAR:     narBuffer.Bytes(),
-		NARHash: narHasher.SumHash(),
-		ExportTrailer: ExportTrailer{
-			ContentAddress: nix.TextContentAddress(caHasher.SumHash()),
-			References:     drv.References().Others,
-		},
-	}
-	blob.StorePath, err = FixedCAOutputPath(
-		drv.Dir,
-		drv.Name+DerivationExt,
-		blob.ContentAddress,
-		drv.References(),
-	)
+	blob, err := NewTextBlob(drv.Dir, drv.Name+DerivationExt, drvBytes, new(drv.References().Others))
 	if err != nil {
 		return nil, fmt.Errorf("export derivation %s: %v", drv.Name, err)
 	}

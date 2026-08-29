@@ -6,53 +6,74 @@ package backend_test
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
+	"errors"
 	"fmt"
+	"iter"
+	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
+	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"golang.org/x/tools/txtar"
+	"rsc.io/script"
+	"rsc.io/script/scripttest"
 	. "zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/multierror"
 	"zb.256lights.llc/pkg/internal/storetest"
+	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/testcontext"
+	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log/testlog"
 	"zombiezen.com/go/nix"
-	"zombiezen.com/go/nix/nar"
 )
 
 func TestImport(t *testing.T) {
-	runTest := func(t *testing.T, dir zbstore.Directory, realStoreDir string) {
+	t.Parallel()
+
+	t.Run("ActualDir", func(t *testing.T) {
+		t.Parallel()
+
 		ctx := testcontext.New(t)
+		dir := backendtest.NewStoreDirectory(t)
 
-		ar, err := txtar.ParseFile(filepath.Join("testdata", "TestImport.txt"))
+		server, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+			TempDir: t.TempDir(),
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		objects, _, err := storetest.TxtarObjects(dir, ar.Files)
+
+		data, err := readTestData(dir, "TestImport.txt", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-
-		exportBuffer := new(bytes.Buffer)
-		exporter := zbstore.NewExportWriter(exportBuffer)
-		for _, obj := range objects {
-			if err := exporter.WriteObject(ctx, obj); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if err := exporter.Close(); err != nil {
+		if err := data.writeTo(ctx, client, nil); err != nil {
 			t.Fatal(err)
 		}
+		runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
+			server: server,
+		})
+	})
 
-		_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	t.Run("MappedDir", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := testcontext.New(t)
+		realStoreDir := t.TempDir()
+		dir := zbstore.DefaultDirectory()
+
+		server, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 			TempDir: t.TempDir(),
 			Options: Options{
 				RealStoreDirectory: realStoreDir,
@@ -62,321 +83,100 @@ func TestImport(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		codec, releaseCodec, err := storeCodec(ctx, client)
+		data, err := readTestData(dir, "TestImport.txt", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = codec.Export(nil, exportBuffer)
-		releaseCodec()
-		if err != nil {
+		if err := data.writeTo(ctx, client, nil); err != nil {
 			t.Fatal(err)
 		}
-
-		for _, obj := range objects {
-			// Call exists method.
-			// Exports don't send a response, so this introduces a sync point.
-			var exists bool
-			err = jsonrpc.Do(ctx, client, zbstorerpc.ExistsMethod, &exists, &zbstorerpc.ExistsRequest{
-				Path: string(obj.StorePath),
-			})
-			if err != nil {
-				t.Error(err)
-			}
-			if !exists {
-				t.Errorf("store reports exists=false for %s", obj.StorePath)
-			}
-
-			// Call info method.
-			var info zbstorerpc.InfoResponse
-			err = jsonrpc.Do(ctx, client, zbstorerpc.InfoMethod, &info, &zbstorerpc.InfoRequest{
-				Path: obj.StorePath,
-			})
-			if err != nil {
-				t.Error(err)
-			} else {
-				want := wantObjectInfo(info.Info, obj)
-				if diff := cmp.Diff(want, info.Info); diff != "" {
-					t.Errorf("%s info (-want +got):\n%s", obj.StorePath, diff)
-				}
-			}
-
-			// Verify that store object exists on disk.
-			realFilePath := filepath.Join(realStoreDir, obj.StorePath.Base())
-			got := new(bytes.Buffer)
-			if err := nar.DumpPath(got, realFilePath); err != nil {
-				t.Error(err)
-			} else if diff := cmp.Diff(obj.NAR, got.Bytes()); diff != "" {
-				t.Errorf("%s NAR content (-want +got):\n%s", obj.StorePath, diff)
-			}
-		}
-	}
-
-	t.Run("ActualDir", func(t *testing.T) {
-		realStoreDir := t.TempDir()
-		storeDir, err := zbstore.CleanDirectory(realStoreDir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		runTest(t, storeDir, realStoreDir)
-	})
-
-	t.Run("MappedDir", func(t *testing.T) {
-		runTest(t, zbstore.DefaultDirectory(), t.TempDir())
+		runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
+			server:        server,
+			realDirectory: realStoreDir,
+		})
 	})
 }
 
 func TestFetch(t *testing.T) {
-	dir := zbstore.DefaultDirectory()
-	exportBuffer := new(bytes.Buffer)
-	exporter := zbstore.NewExportWriter(exportBuffer)
-	narBuffer := new(bytes.Buffer)
-	if err := storetest.SingleFileNAR(narBuffer, []byte("Hello, World!\n")); err != nil {
-		t.Fatal(err)
-	}
-	narHash := nix.NewHash(nix.SHA256, new(sha256.Sum256(narBuffer.Bytes()))[:])
-	path, ca, err := storetest.ExportSourceNAR(exporter, narBuffer.Bytes(), storetest.SourceExportOptions{
-		Name:      "hello.txt",
-		Directory: dir,
-	})
+	t.Parallel()
+
+	testDataDir := filepath.Join("testdata", filepath.FromSlash(t.Name()))
+	listing, err := os.ReadDir(testDataDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := exporter.Close(); err != nil {
-		t.Fatal(err)
+
+	for _, entry := range listing {
+		fileName := entry.Name()
+		if strings.HasPrefix(fileName, ".") {
+			continue
+		}
+		testName, isTXTAR := strings.CutSuffix(fileName, ".txt")
+		if !isTXTAR {
+			continue
+		}
+
+		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := testcontext.New(t)
+			dir := zbstore.DefaultDirectory()
+			realStoreDir := t.TempDir()
+
+			fallback := new(storetest.Store)
+			server, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+				TempDir: t.TempDir(),
+				Options: Options{
+					RealStoreDirectory: realStoreDir,
+					Fallback:           fallback,
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			data, err := readTestData(dir, t.Name(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := data.writeTo(ctx, client, fallback); err != nil {
+				t.Fatal(err)
+			}
+			runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
+				server:        server,
+				realDirectory: realStoreDir,
+				fallback:      fallback,
+			})
+		})
 	}
-
-	t.Run("NotFound", func(t *testing.T) {
-		ctx := testcontext.New(t)
-		realStoreDir := t.TempDir()
-		_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
-			TempDir: t.TempDir(),
-			Options: Options{
-				RealStoreDirectory: realStoreDir,
-			},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		got := new(zbstorerpc.FetchResponse)
-		err = jsonrpc.Do(ctx, client, zbstorerpc.FetchMethod, got, &zbstorerpc.FetchRequest{
-			Paths: []zbstore.Path{path},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := &zbstorerpc.FetchResponse{
-			Found: map[zbstore.Path]*zbstorerpc.ObjectInfo{},
-		}
-		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
-			t.Errorf("response (-want +got):\n%s", diff)
-		}
-	})
-
-	t.Run("ExistsLocally", func(t *testing.T) {
-		ctx := testcontext.New(t)
-		realStoreDir := t.TempDir()
-		_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
-			TempDir: t.TempDir(),
-			Options: Options{
-				RealStoreDirectory: realStoreDir,
-			},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		codec, releaseCodec, err := storeCodec(ctx, client)
-		if err != nil {
-			t.Fatal(err)
-		}
-		err = codec.Export(nil, bytes.NewReader(exportBuffer.Bytes()))
-		releaseCodec()
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		got := new(zbstorerpc.FetchResponse)
-		err = jsonrpc.Do(ctx, client, zbstorerpc.FetchMethod, got, &zbstorerpc.FetchRequest{
-			Paths: []zbstore.Path{path},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := &zbstorerpc.FetchResponse{
-			Found: map[zbstore.Path]*zbstorerpc.ObjectInfo{
-				path: {
-					ContentAddress: ca,
-					NARSize:        int64(narBuffer.Len()),
-					NARHash:        narHash,
-				},
-			},
-		}
-		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
-			t.Errorf("response (-want +got):\n%s", diff)
-		}
-	})
-
-	t.Run("FromFallback", func(t *testing.T) {
-		ctx := testcontext.New(t)
-
-		fallback := new(storetest.Store)
-		if err := fallback.StoreImport(ctx, bytes.NewReader(exportBuffer.Bytes())); err != nil {
-			t.Fatal(err)
-		}
-
-		realStoreDir := t.TempDir()
-		_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
-			TempDir: t.TempDir(),
-			Options: Options{
-				RealStoreDirectory: realStoreDir,
-				Fallback:           fallback,
-			},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		got := new(zbstorerpc.FetchResponse)
-		err = jsonrpc.Do(ctx, client, zbstorerpc.FetchMethod, got, &zbstorerpc.FetchRequest{
-			Paths: []zbstore.Path{path},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := &zbstorerpc.FetchResponse{
-			Found: map[zbstore.Path]*zbstorerpc.ObjectInfo{
-				path: {
-					ContentAddress: ca,
-					NARSize:        int64(narBuffer.Len()),
-					NARHash:        narHash,
-				},
-			},
-		}
-		if diff := cmp.Diff(want, got, cmpopts.EquateEmpty()); diff != "" {
-			t.Errorf("response (-want +got):\n%s", diff)
-		}
-	})
 }
 
 func TestDelete(t *testing.T) {
-	dir := zbstore.DefaultDirectory()
-	const fileContent = "Hello, World!\n"
-	exportBuffer := new(bytes.Buffer)
-	exporter := zbstore.NewExportWriter(exportBuffer)
-	storePath1, _, err := storetest.ExportFlatFile(exporter, dir, "hello.txt", []byte(fileContent), nix.SHA256)
-	if err != nil {
-		t.Fatal(err)
-	}
-	storePath2, _, err := storetest.ExportSourceFile(exporter, []byte(storePath1), storetest.SourceExportOptions{
-		Name:      "ref.txt",
-		Directory: dir,
-		References: zbstore.References{
-			Others: *sets.NewSorted(storePath1),
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	storePath3, _, err := storetest.ExportSourceFile(exporter, []byte(storePath2), storetest.SourceExportOptions{
-		Name:      "chain.txt",
-		Directory: dir,
-		References: zbstore.References{
-			Others: *sets.NewSorted(storePath2),
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	const fakeDigest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	storeObject4Content := string(storePath2) + "\n" + string(dir) + fakeDigest + "-self.txt\n"
-	storePath4, _, err := storetest.ExportSourceFile(exporter, []byte(storeObject4Content), storetest.SourceExportOptions{
-		Name:       "self.txt",
-		Directory:  dir,
-		TempDigest: fakeDigest,
-		References: zbstore.References{
-			Self:   true,
-			Others: *sets.NewSorted(storePath2),
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := exporter.Close(); err != nil {
-		t.Fatal(err)
-	}
-	allObjects := sets.New(storePath1, storePath2, storePath3, storePath4)
+	t.Parallel()
 
-	tests := []struct {
-		name      string
-		paths     sets.Set[zbstore.Path]
-		recursive bool
-		want      sets.Set[zbstore.Path]
-		error     bool
-	}{
-		{
-			name:  "DeleteNothing",
-			paths: sets.New[zbstore.Path](),
-			want:  allObjects,
-		},
-		{
-			name:  "DeleteRecursiveNothing",
-			paths: sets.New[zbstore.Path](),
-			want:  allObjects,
-		},
-		{
-			name:  "DeleteNoReverseDeps",
-			paths: sets.New(storePath3),
-			want:  sets.New(storePath1, storePath2, storePath4),
-		},
-		{
-			name:      "DeleteRecursiveNoReverseDeps",
-			recursive: true,
-			paths:     sets.New(storePath3),
-			want:      sets.New(storePath1, storePath2, storePath4),
-		},
-		{
-			name:  "DeleteSelfDep",
-			paths: sets.New(storePath4),
-			want:  sets.New(storePath1, storePath2, storePath3),
-		},
-		{
-			name:      "DeleteRecursiveSelfDep",
-			recursive: true,
-			paths:     sets.New(storePath4),
-			want:      sets.New(storePath1, storePath2, storePath3),
-		},
-		{
-			name:  "DeleteWithReverseDeps",
-			paths: sets.New(storePath2),
-			want:  allObjects,
-			error: true,
-		},
-		{
-			name:      "DeleteRecursiveWithReverseDeps",
-			paths:     sets.New(storePath2),
-			recursive: true,
-			want:      sets.New(storePath1),
-		},
-		{
-			name:  "DeleteWithChainOfReverseDeps",
-			paths: sets.New(storePath1),
-			want:  allObjects,
-			error: true,
-		},
-		{
-			name:      "DeleteRecursiveWithChainOfReverseDeps",
-			paths:     sets.New(storePath1),
-			recursive: true,
-			want:      sets.New[zbstore.Path](),
-		},
+	testDataDir := filepath.Join("testdata", filepath.FromSlash(t.Name()))
+	listing, err := os.ReadDir(testDataDir)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
+	for _, entry := range listing {
+		fileName := entry.Name()
+		if strings.HasPrefix(fileName, ".") {
+			continue
+		}
+		testName, isTXTAR := strings.CutSuffix(fileName, ".txt")
+		if !isTXTAR {
+			continue
+		}
+
+		t.Run(testName, func(t *testing.T) {
+			t.Parallel()
+
 			ctx := testcontext.New(t)
-
+			dir := zbstore.DefaultDirectory()
 			realStoreDir := t.TempDir()
+
 			server, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 				TempDir: t.TempDir(),
 				Options: Options{
@@ -387,85 +187,841 @@ func TestDelete(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			codec, releaseCodec, err := storeCodec(ctx, client)
+			data, err := readTestData(dir, t.Name(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = codec.Export(nil, bytes.NewReader(exportBuffer.Bytes()))
-			releaseCodec()
-			if err != nil {
+			if err := data.writeTo(ctx, client, nil); err != nil {
 				t.Fatal(err)
 			}
-
-			// Call exists method.
-			// Exports don't send a response, so this introduces a sync point.
-			var exists bool
-			err = jsonrpc.Do(ctx, client, zbstorerpc.ExistsMethod, &exists, &zbstorerpc.ExistsRequest{
-				Path: string(storePath2),
+			runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
+				server:        server,
+				realDirectory: realStoreDir,
 			})
-			if err != nil {
-				t.Error(err)
-			}
-			if !exists {
-				t.Errorf("store reports exists=false for %s", storePath2)
-			}
-
-			// Perform delete.
-			f := server.Delete
-			if test.recursive {
-				f = server.DeleteIncludingReferences
-			}
-			if err := f(ctx, test.paths); err != nil {
-				t.Log("delete error:", err)
-				if !test.error {
-					t.Fail()
-				}
-			} else if test.error {
-				t.Error("delete did not return an error")
-			}
-
-			// Compare files in store with what we expect.
-			storeListing, err := os.ReadDir(realStoreDir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			got := make(sets.Set[zbstore.Path])
-			for _, ent := range storeListing {
-				name := ent.Name()
-				path, err := dir.Object(name)
-				if err != nil {
-					t.Errorf("Unexpected file %s in store (%v)", name, err)
-				} else {
-					got.Add(path)
-				}
-			}
-			if diff := cmp.Diff(test.want, got); diff != "" {
-				t.Errorf("files after delete (-want +got):\n%s", diff)
-			}
-
-			// Ensure that store has the expected object info.
-			for path := range allObjects.All() {
-				var resp zbstorerpc.InfoResponse
-				err := jsonrpc.Do(ctx, client, zbstorerpc.InfoMethod, &resp, &zbstorerpc.InfoRequest{
-					Path: path,
-				})
-				if err != nil {
-					t.Errorf("%s(%q): %v", zbstorerpc.InfoMethod, path, err)
-					continue
-				}
-				if resp.Info != nil && !test.want.Has(path) {
-					t.Errorf("store database still has information for %s", path)
-				} else if resp.Info == nil && test.want.Has(path) {
-					t.Errorf("store database no longer has information for %s", path)
-				}
-			}
 		})
 	}
 }
 
-// wantObjectInfo builds the expected [*zbstorerpcrpc.ObjectInfo] for the given blob.
-// It uses got.NARHash to determine the hashing algorithm to check against.
-func wantObjectInfo(got *zbstorerpc.ObjectInfo, blob *zbstore.Blob) *zbstorerpc.ObjectInfo {
+type testDataArchive struct {
+	filename        string
+	comment         []byte
+	objects         storetest.BlobSlice
+	backendObjects  sets.Set[zbstore.Path]
+	fallbackObjects sets.Set[zbstore.Path]
+	rewrites        map[string]zbstore.Path
+}
+
+// readTestData parses a txtar file.
+// If the name does not end with ".txt", the extension is assumed.
+// Paths are interpreted relative to the testdata directory.
+//
+// fileSubstitutions is a map of textual substitutions to make on the txtar objects
+// before processing them with [storetest.TxtarObjects].
+func readTestData(dir zbstore.Directory, name string, fileSubstitutions map[string]string) (*testDataArchive, error) {
+	const ext = ".txt"
+	if !strings.HasSuffix(name, ext) {
+		name += ext
+	}
+	filename := filepath.Join("testdata", filepath.FromSlash(name))
+	archive, err := txtar.ParseFile(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	backendObjectNames := make(sets.Set[string], len(archive.Files))
+	fallbackObjectNames := make(sets.Set[string], len(archive.Files))
+	for i := range archive.Files {
+		file := &archive.Files[i]
+		var labels []string
+		labels, file.Name = parseFileNameLabels(file.Name)
+		base, _, _ := strings.Cut(file.Name, "/")
+		if len(labels) == 0 {
+			backendObjectNames.Add(base)
+		} else {
+			for _, label := range labels {
+				switch label {
+				case "null":
+				case "backend":
+					backendObjectNames.Add(base)
+				case "fallback":
+					fallbackObjectNames.Add(base)
+				default:
+					return nil, fmt.Errorf("%s: unknown label [%s] on %s", filename, label, file.Name)
+				}
+			}
+		}
+	}
+
+	if len(fileSubstitutions) > 0 {
+		replacer := newReplacer(maps.All(fileSubstitutions))
+		for i := range archive.Files {
+			file := &archive.Files[i]
+			file.Data = []byte(replacer.Replace(string(file.Data)))
+		}
+	}
+
+	allObjects, rewrites, err := storetest.TxtarObjects(dir, archive.Files)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %v", filename, err)
+	}
+	backendObjects := make(sets.Set[zbstore.Path], len(allObjects))
+	for name := range backendObjectNames {
+		backendObjects.Add(rewrites[name])
+	}
+	fallbackObjects := make(sets.Set[zbstore.Path], len(allObjects))
+	for name := range fallbackObjectNames {
+		fallbackObjects.Add(rewrites[name])
+	}
+	return &testDataArchive{
+		filename:        filename,
+		comment:         archive.Comment,
+		objects:         allObjects,
+		backendObjects:  backendObjects,
+		fallbackObjects: fallbackObjects,
+		rewrites:        rewrites,
+	}, nil
+}
+
+func (data *testDataArchive) writeTo(ctx context.Context, client *jsonrpc.Client, fallback zbstore.Importer) error {
+	exportBuffer := new(bytes.Buffer)
+	exporter := zbstore.NewExportWriter(exportBuffer)
+	for _, obj := range data.objects {
+		if data.backendObjects.Has(obj.StorePath) {
+			if err := exporter.WriteObject(ctx, obj); err != nil {
+				return err
+			}
+		}
+	}
+	if err := exporter.Close(); err != nil {
+		return err
+	}
+	codec, releaseCodec, err := storeCodec(ctx, client)
+	if err != nil {
+		return err
+	}
+	err = codec.Export(nil, exportBuffer)
+	releaseCodec()
+	if err != nil {
+		return err
+	}
+	// Exports don't send a response, so this introduces a sync point.
+	if err := jsonrpc.Do(ctx, client, zbstorerpc.NopMethod, nil, nil); err != nil {
+		return err
+	}
+
+	if data.fallbackObjects.Len() > 0 {
+		if fallback == nil {
+			return fmt.Errorf("test file contains [fallback] objects, but no fallback provided")
+		}
+		exportBuffer.Reset()
+		exporter := zbstore.NewExportWriter(exportBuffer)
+		for _, obj := range data.objects {
+			if data.fallbackObjects.Has(obj.StorePath) {
+				if err := exporter.WriteObject(ctx, obj); err != nil {
+					return err
+				}
+			}
+		}
+		if err := exporter.Close(); err != nil {
+			return err
+		}
+		if err := fallback.StoreImport(ctx, exportBuffer); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func parseFileNameLabels(name string) ([]string, string) {
+	var labels []string
+	for {
+		var hasLabel bool
+		name, hasLabel = strings.CutPrefix(name, "[")
+		if !hasLabel {
+			return labels, name
+		}
+		var label string
+		label, name, _ = strings.Cut(name, "]")
+		labels = append(labels, label)
+		name = strings.TrimLeft(name, " \t")
+	}
+}
+
+func reverseLookup[K any, V comparable](m iter.Seq2[K, V], want V) (K, bool) {
+	for k, v := range m {
+		if v == want {
+			return k, true
+		}
+	}
+	var zero K
+	return zero, false
+}
+
+// scriptTestOptions is the set of optional arguments to [runScripTest].
+type scriptTestOptions struct {
+	// server is only set for tests that need to access server methods.
+	server *Server
+	// realDirectory is the path to the store's actual directory.
+	realDirectory string
+	// fallback is the fallback store that the server is configured to read from.
+	fallback *storetest.Store
+	// initialEnv is a map of any extra environment variables to set in the script to start.
+	initialEnv map[string]string
+}
+
+// runScriptTest runs a backend script test from a testdata file.
+// See testdata/README.md for documentation.
+func runScriptTest(ctx context.Context, tb testing.TB, dir zbstore.Directory, client *jsonrpc.Client, data *testDataArchive, opts *scriptTestOptions) (env map[string]string) {
+	tb.Helper()
+
+	if opts == nil {
+		opts = new(scriptTestOptions)
+	}
+
+	engine := &script.Engine{
+		Cmds: map[string]script.Cmd{
+			"env":    script.Env(),
+			"echo":   script.Echo(),
+			"stdout": script.Stdout(),
+			"stderr": script.Stderr(),
+			"grep":   script.Grep(),
+			"wait":   script.Wait(),
+			"stop":   script.Stop(),
+			"skip":   scripttest.Skip(),
+			"read":   readCommand(),
+		},
+		Conds: map[string]script.Cond{},
+	}
+	sc := &storeCommands{
+		tb:         tb,
+		directory:  dir,
+		server:     opts.server,
+		client:     client,
+		allObjects: data.objects,
+		rewrites:   data.rewrites,
+		fallback:   opts.fallback,
+	}
+	sc.addTo(engine.Cmds)
+	addSystemConds(engine.Conds, system.Current())
+
+	initialEnvSlice := []string{}
+	if opts != nil {
+		for k, v := range opts.initialEnv {
+			initialEnvSlice = append(initialEnvSlice, k+"="+v)
+		}
+	}
+	realDirectory := opts.realDirectory
+	if realDirectory == "" {
+		realDirectory = string(dir)
+	}
+	state, err := script.NewState(ctx, realDirectory, initialEnvSlice)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	tb.Log(time.Now().UTC().Format(time.RFC3339))
+	work, _ := state.LookupEnv("WORK")
+	tb.Logf("$WORK=%s", work)
+	scripttest.Run(tb, engine, state, data.filename, bytes.NewReader(data.comment))
+	env = make(map[string]string)
+	for _, kv := range state.Environ() {
+		k, v, _ := strings.Cut(kv, "=")
+		env[k] = v
+	}
+	return env
+}
+
+func newReplacer[K, V ~string](rewrites iter.Seq2[K, V]) *strings.Replacer {
+	var args []string
+	for k, v := range rewrites {
+		args = append(args, string(k), string(v))
+	}
+	return strings.NewReplacer(args...)
+}
+
+func addSystemConds(dst map[string]script.Cond, sys system.System) {
+	dst["x86_64"] = script.BoolCondition("architecture is 64-bit Intel", sys.Arch.IsX86() && sys.Arch.Is64Bit())
+	dst["aarch64"] = script.BoolCondition("architecture is 64-bit ARM", sys.Arch.IsARM() && sys.Arch.Is64Bit())
+	dst["linux"] = script.BoolCondition("operating system is Linux", sys.OS.IsLinux())
+	dst["macos"] = script.BoolCondition("operating system is macOS", sys.OS.IsMacOS())
+	dst["windows"] = script.BoolCondition("operating system is Windows", sys.OS.IsWindows())
+}
+
+func readCommand() script.Cmd {
+	return script.Command(
+		script.CmdUsage{
+			Summary: "read one line from the stdout buffer and assign to names",
+			Args:    "name...",
+		},
+		func(state *script.State, args ...string) (script.WaitFunc, error) {
+			if len(args) == 0 {
+				return nil, script.ErrUsage
+			}
+			firstLine, _, _ := strings.Cut(state.Stdout(), "\n")
+			for _, name := range args[:len(args)-1] {
+				firstLine = strings.TrimLeft(firstLine, " \t")
+				end := strings.IndexAny(firstLine, " \t")
+				if end < 0 {
+					end = len(firstLine)
+				}
+				state.Setenv(name, firstLine[:end])
+			}
+			state.Setenv(args[len(args)-1], firstLine)
+			return nil, nil
+		},
+	)
+}
+
+type storeCommands struct {
+	tb         testing.TB
+	directory  zbstore.Directory
+	server     *Server
+	client     *jsonrpc.Client
+	allObjects zbstore.Store
+	rewrites   map[string]zbstore.Path
+	fallback   *storetest.Store
+}
+
+func (sc *storeCommands) addTo(cmds map[string]script.Cmd) {
+	cmds["only"] = sc.only()
+	cmds["realpath"] = sc.realpath()
+	cmds["storepath"] = sc.storepath()
+	cmds["exists"] = sc.exists()
+	cmds["cmpinfo"] = sc.cmpinfo()
+	cmds["realize"] = sc.realize()
+	cmds["fetch"] = sc.fetch()
+	cmds["write-realization"] = sc.writeRealization()
+	if sc.server != nil {
+		cmds["delete"] = sc.delete()
+	}
+}
+
+func (sc *storeCommands) newStoreReplacer() *strings.Replacer {
+	return newReplacer(maps.All(sc.rewrites))
+}
+
+func (sc *storeCommands) newRealReplacer() *strings.Replacer {
+	replacements := make([]string, 0, len(sc.rewrites)*2)
+	for fileName, path := range sc.rewrites {
+		replacements = append(replacements, fileName, path.Base())
+	}
+	return strings.NewReplacer(replacements...)
+}
+
+func (sc *storeCommands) only() script.Cmd {
+	return script.Command(
+		script.CmdUsage{
+			Summary: "verify that the store contains exactly the set of objects named",
+			Args:    "[path...]",
+		},
+		func(state *script.State, args ...string) (script.WaitFunc, error) {
+			listing, err := os.ReadDir(state.Getwd())
+			if err != nil {
+				return nil, err
+			}
+			var ec multierror.Collector
+			replacer := sc.newRealReplacer()
+			for _, arg := range args {
+				rewritten := replacer.Replace(arg)
+				i := slices.IndexFunc(listing, func(entry os.DirEntry) bool {
+					return entry.Name() == rewritten
+				})
+				if i == -1 {
+					ec.Add(fmt.Errorf("missing %s from store", arg))
+				} else {
+					listing = slices.Delete(listing, i, i+1)
+				}
+			}
+			for _, entry := range listing {
+				ec.Add(fmt.Errorf("unexpected object %s in store", entry.Name()))
+			}
+			return nil, ec.Error()
+		},
+	)
+}
+
+func (sc *storeCommands) exists() script.Cmd {
+	return script.Command(
+		script.CmdUsage{
+			Summary: "check that files exist",
+			Args:    "[-readonly] [-exec] file...",
+		},
+		func(s *script.State, args ...string) (script.WaitFunc, error) {
+			var readonly, exec bool
+			for ; len(args) > 0 && strings.HasPrefix(args[0], "-"); args = args[1:] {
+				if args[0] == "--" {
+					args = args[1:]
+					break
+				}
+				switch args[0] {
+				case "-readonly":
+					readonly = true
+				case "-exec":
+					exec = true
+				default:
+					return nil, script.ErrUsage
+				}
+			}
+			if len(args) == 0 {
+				return nil, script.ErrUsage
+			}
+			replacer := sc.newRealReplacer()
+			for _, arg := range args {
+				arg = s.Path(replacer.Replace(arg))
+				info, err := os.Stat(arg)
+				if err != nil {
+					return nil, err
+				}
+				if readonly && info.Mode()&0o222 != 0 {
+					return nil, fmt.Errorf("%s exists but is writable", arg)
+				}
+				if exec && runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
+					return nil, fmt.Errorf("%s exists but is not executable", arg)
+				}
+			}
+
+			return nil, nil
+		})
+}
+
+func (sc *storeCommands) storepath() script.Cmd {
+	return script.Command(
+		script.CmdUsage{
+			Summary: "writes resolved store paths to stdout, followed by a newline",
+			Args:    "path...",
+		},
+		func(state *script.State, args ...string) (script.WaitFunc, error) {
+			if len(args) == 0 {
+				return nil, script.ErrUsage
+			}
+			sb := new(strings.Builder)
+			replacer := sc.newStoreReplacer()
+			for i, arg := range args {
+				if i > 0 {
+					sb.WriteString(" ")
+				}
+				sb.WriteString(replacer.Replace(arg))
+			}
+			sb.WriteString("\n")
+			out := sb.String()
+			return func(state *script.State) (stdout string, stderr string, err error) {
+				return out, "", nil
+			}, nil
+		},
+	)
+}
+
+func (sc *storeCommands) realpath() script.Cmd {
+	return script.Command(
+		script.CmdUsage{
+			Summary: "writes filesystem paths to stdout, followed by a newline",
+			Args:    "path...",
+		},
+		func(state *script.State, args ...string) (script.WaitFunc, error) {
+			if len(args) == 0 {
+				return nil, script.ErrUsage
+			}
+			sb := new(strings.Builder)
+			replacer := sc.newRealReplacer()
+			for i, arg := range args {
+				if i > 0 {
+					sb.WriteString(" ")
+				}
+				sb.WriteString(replacer.Replace(arg))
+			}
+			sb.WriteString("\n")
+			out := sb.String()
+			return func(state *script.State) (stdout string, stderr string, err error) {
+				return out, "", nil
+			}, nil
+		},
+	)
+}
+
+func (sc *storeCommands) cmpinfo() script.Cmd {
+	return script.Command(
+		script.CmdUsage{
+			Summary: "verify that info from store matches info from test",
+			Args:    "path...",
+		},
+		func(state *script.State, args ...string) (script.WaitFunc, error) {
+			ctx := state.Context()
+			if len(args) == 0 {
+				return nil, script.ErrUsage
+			}
+			replacer := sc.newStoreReplacer()
+			var ec multierror.Collector
+			for _, arg := range args {
+				rewritten := replacer.Replace(arg)
+				path, subpath, err := sc.directory.ParsePath(rewritten)
+				if err != nil {
+					ec.Add(err)
+					continue
+				}
+				if subpath != "" {
+					ec.Add(fmt.Errorf("cannot use subpath in %s", arg))
+					continue
+				}
+				want, err := sc.allObjects.Object(ctx, path)
+				if err != nil {
+					ec.Add(err)
+					continue
+				}
+				var info zbstorerpc.InfoResponse
+				err = jsonrpc.Do(ctx, sc.client, zbstorerpc.InfoMethod, &info, &zbstorerpc.InfoRequest{
+					Path: path,
+				})
+				if err != nil {
+					ec.Add(err)
+					continue
+				}
+				if diff := diffObjectInfo(ctx, want, info.Info); diff != "" {
+					ec.Add(fmt.Errorf("%s info (-want +got):\n%s", path, diff))
+				}
+			}
+			return nil, ec.Error()
+		},
+	)
+}
+
+func (sc *storeCommands) realize() script.Cmd {
+	return script.Command(
+		script.CmdUsage{
+			Summary: "realize one or more derivations in the store",
+			Args:    "[--clean] drvPath...",
+			Async:   true,
+		},
+		sc.runRealize,
+	)
+}
+
+func (sc *storeCommands) runRealize(state *script.State, args ...string) (script.WaitFunc, error) {
+	ctx := state.Context()
+
+	clean := false
+	for ; len(args) > 0 && strings.HasPrefix(args[0], "-"); args = args[1:] {
+		if args[0] == "--" {
+			args = args[1:]
+			break
+		}
+		switch args[0] {
+		case "--clean":
+			clean = true
+		default:
+			return nil, script.ErrUsage
+		}
+	}
+	if len(args) == 0 {
+		return nil, script.ErrUsage
+	}
+	drvPaths := make([]zbstore.Path, 0, len(args))
+	replacer := sc.newStoreReplacer()
+	for _, arg := range args {
+		rewritten := replacer.Replace(arg)
+		drvPath, subpath, err := sc.directory.ParsePath(rewritten)
+		if err != nil {
+			return nil, err
+		}
+		if subpath != "" {
+			return nil, fmt.Errorf("cannot use subpath in %s", arg)
+		}
+		drvPaths = append(drvPaths, drvPath)
+	}
+
+	realizeResponse := new(zbstorerpc.RealizeResponse)
+	err := jsonrpc.Do(ctx, sc.client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
+		DrvPaths: drvPaths,
+		Reuse:    &zbstorerpc.ReusePolicy{All: !clean},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if realizeResponse.BuildID == "" {
+		return nil, fmt.Errorf("no build ID returned")
+	}
+
+	return func(state *script.State) (stdout string, stderr string, err error) {
+		got, err := backendtest.WaitForBuild(ctx, sc.client, realizeResponse.BuildID)
+		if err != nil {
+			return "", "", err
+		}
+		if buildJSON, err := jsonv2.Marshal(got); err != nil {
+			sc.tb.Error("marshal build:", err)
+		} else {
+			state.Setenv("build", string(buildJSON))
+		}
+		if !got.EndedAt.Valid {
+			sc.tb.Error("build.endedAt = null")
+		}
+
+		logArchive := &txtar.Archive{
+			Files: make([]txtar.File, 0, len(got.Results)),
+		}
+		for _, result := range got.Results {
+			var logFile txtar.File
+			var err error
+			logFile.Data, err = backendtest.ReadLog(ctx, sc.client, realizeResponse.BuildID, result.DrvPath)
+			if err != nil {
+				state.Logf("%v", err)
+				continue
+			}
+			var hasRewrite bool
+			logFile.Name, hasRewrite = reverseLookup(maps.All(sc.rewrites), result.DrvPath)
+			if !hasRewrite {
+				logFile.Name = result.DrvPath.Base()
+			}
+			logArchive.Files = append(logArchive.Files, logFile)
+		}
+
+		if got.Status == zbstorerpc.BuildSuccess {
+			if len(drvPaths) == 1 {
+				if result, err := got.ResultForPath(drvPaths[0]); err != nil {
+					state.Logf("%v", err)
+				} else {
+					for _, output := range result.Outputs {
+						if output.Path.Valid {
+							state.Setenv(output.Name, string(output.Path.X))
+						}
+					}
+				}
+			}
+			err = nil
+		} else {
+			err = fmt.Errorf("build %s failed with status %q", realizeResponse.BuildID, got.Status)
+		}
+		return string(txtar.Format(logArchive)), "", err
+	}, nil
+}
+
+func (sc *storeCommands) writeRealization() script.Cmd {
+	return script.Command(
+		script.CmdUsage{
+			Summary: "write a realization to the fallback store",
+			Args:    "drvPath!outputName path",
+		},
+		func(state *script.State, args ...string) (script.WaitFunc, error) {
+			ctx := state.Context()
+			if len(args) != 2 {
+				return nil, script.ErrUsage
+			}
+			if sc.fallback == nil {
+				return nil, fmt.Errorf("fallback store not set")
+			}
+			replacer := sc.newStoreReplacer()
+			ref, err := zbstore.ParseOutputReference(replacer.Replace(args[0]))
+			if err != nil {
+				return nil, err
+			}
+			outputPath, err := zbstore.ParsePath(replacer.Replace(args[1]))
+			if err != nil {
+				return nil, err
+			}
+			drvHash, derivers, err := hashDerivationFromFetcher(ctx, sc.allObjects, sc.fallback, ref.DrvPath)
+			if err != nil {
+				return nil, fmt.Errorf("write realization %v → %s: %v", ref, outputPath, err)
+			}
+			realizationRef := zbstore.RealizationOutputReference{DerivationHash: drvHash, OutputName: ref.OutputName}
+			realization := &zbstore.Realization{OutputPath: outputPath}
+			if outputObject, err := sc.allObjects.Object(ctx, outputPath); err != nil && !errors.Is(err, zbstore.ErrNotFound) {
+				return nil, fmt.Errorf("write realization %v → %s: %v", ref, outputPath, err)
+			} else if err == nil {
+				for ref := range outputObject.Info().References.Values() {
+					if d := derivers[ref]; len(d) == 0 {
+						realization.ReferenceClasses = append(realization.ReferenceClasses, &zbstore.ReferenceClass{Path: ref})
+					} else {
+						for _, realizationRef := range d {
+							realization.ReferenceClasses = append(realization.ReferenceClasses, &zbstore.ReferenceClass{Path: ref, Realization: realizationRef})
+						}
+					}
+				}
+			}
+			sc.fallback.AddRealization(realizationRef, realization)
+			state.Logf("Wrote realization %v → %s to fallback", realizationRef, outputPath)
+			return nil, nil
+		},
+	)
+}
+
+func (sc *storeCommands) fetch() script.Cmd {
+	return script.Command(
+		script.CmdUsage{
+			Summary: "fetch one or more store objects from fallback",
+			Args:    "path...",
+		},
+		func(state *script.State, args ...string) (script.WaitFunc, error) {
+			ctx := state.Context()
+			if len(args) == 0 {
+				return nil, script.ErrUsage
+			}
+			paths := make([]zbstore.Path, 0, len(args))
+			replacer := sc.newStoreReplacer()
+			for _, arg := range args {
+				rewritten := replacer.Replace(arg)
+				path, subpath, err := sc.directory.ParsePath(rewritten)
+				if err != nil {
+					return nil, err
+				}
+				if subpath != "" {
+					return nil, fmt.Errorf("cannot use subpath in %s", arg)
+				}
+				paths = append(paths, path)
+			}
+
+			response := new(zbstorerpc.FetchResponse)
+			err := jsonrpc.Do(ctx, sc.client, zbstorerpc.FetchMethod, response, &zbstorerpc.FetchRequest{
+				Paths: paths,
+			})
+			if err != nil {
+				return nil, err
+			}
+			for path, got := range response.Found {
+				if !slices.Contains(paths, path) {
+					sc.tb.Errorf("fetch response contains unrequested path %s", path)
+					continue
+				}
+				want, err := sc.allObjects.Object(ctx, path)
+				if err != nil {
+					if errors.Is(err, zbstore.ErrNotFound) {
+						sc.tb.Errorf("fetch response contains unknown object %s", path)
+					}
+					return nil, err
+				}
+				if diff := diffObjectInfo(ctx, want, got); diff != "" {
+					sc.tb.Errorf("%s info (-want +got):\n%s", path, diff)
+				}
+			}
+
+			var unreceivedPaths []zbstore.Path
+			for _, path := range paths {
+				if response.Found[path] == nil {
+					unreceivedPaths = append(unreceivedPaths, path)
+				}
+			}
+			if len(unreceivedPaths) > 0 {
+				sb := new(strings.Builder)
+				sb.WriteString("fetch did not retrieve ")
+				for i, path := range unreceivedPaths {
+					if i > 0 {
+						sb.WriteString(", ")
+					}
+					sb.WriteString(string(path))
+				}
+				return nil, errors.New(sb.String())
+			}
+
+			return nil, nil
+		},
+	)
+}
+
+func (sc *storeCommands) delete() script.Cmd {
+	return script.Command(
+		script.CmdUsage{
+			Summary: "delete one or more store objects",
+			Args:    "[-r] path...",
+		},
+		func(state *script.State, args ...string) (script.WaitFunc, error) {
+			ctx := state.Context()
+			recursive := false
+			for ; len(args) > 0 && strings.HasPrefix(args[0], "-"); args = args[1:] {
+				if args[0] == "--" {
+					args = args[1:]
+					break
+				}
+				switch args[0] {
+				case "-r":
+					recursive = true
+				default:
+					return nil, script.ErrUsage
+				}
+			}
+			if len(args) == 0 {
+				return nil, script.ErrUsage
+			}
+			paths := make(sets.Set[zbstore.Path], len(args))
+			replacer := sc.newStoreReplacer()
+			for _, arg := range args {
+				rewritten := replacer.Replace(arg)
+				path, subpath, err := sc.directory.ParsePath(rewritten)
+				if err != nil {
+					return nil, err
+				}
+				if subpath != "" {
+					return nil, fmt.Errorf("cannot use subpath in %s", arg)
+				}
+				paths.Add(path)
+			}
+			f := sc.server.Delete
+			if recursive {
+				f = sc.server.DeleteIncludingReferences
+			}
+			if err := f(ctx, paths); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		},
+	)
+}
+
+// hashDerivationFromFetcher hashes the derivation at the given path
+// by reading realizations from a [zbstore.RealizationFetcher].
+// If the fetcher does not return exactly one realization for each transitive derivation,
+// then hashDerivationFromFetcher returns an error.
+func hashDerivationFromFetcher(ctx context.Context, drvStore zbstore.Store, fetcher zbstore.RealizationFetcher, drvPath zbstore.Path) (drvHash nix.Hash, derivers map[zbstore.Path][]zbstore.RealizationOutputReference, err error) {
+	drvHashes := make(map[zbstore.Path]nix.Hash)
+	derivers = make(map[zbstore.Path][]zbstore.RealizationOutputReference)
+	var f func(zbstore.OutputReference) (zbstore.Path, error)
+	f = func(ref zbstore.OutputReference) (zbstore.Path, error) {
+		drvHash := drvHashes[ref.DrvPath]
+		if drvHash.IsZero() {
+			drvObject, err := drvStore.Object(ctx, ref.DrvPath)
+			if err != nil {
+				return "", fmt.Errorf("realization for %v: %v", ref, err)
+			}
+			drv, err := zbstore.ParseDerivationObject(ctx, drvObject)
+			if err != nil {
+				return "", fmt.Errorf("realization for %v: %v", ref, err)
+			}
+			drvHash, err = drv.SHA256RealizationHash(f)
+			if err != nil {
+				return "", fmt.Errorf("realization for %v: %v", ref, err)
+			}
+			drvHashes[ref.DrvPath] = drvHash
+		}
+
+		realizations, err := fetcher.FetchRealizations(ctx, drvHash)
+		if err != nil {
+			return "", fmt.Errorf("realization for %v: %v", ref, err)
+		}
+		r, err := xiter.Single(slices.Values(realizations.Realizations[ref.OutputName]))
+		if err != nil {
+			return "", fmt.Errorf("realization for %v: %v", ref, err)
+		}
+		derivers[r.OutputPath] = append(derivers[r.OutputPath], zbstore.RealizationOutputReference{
+			DerivationHash: drvHash,
+			OutputName:     ref.OutputName,
+		})
+		return r.OutputPath, nil
+	}
+
+	drvObject, err := drvStore.Object(ctx, drvPath)
+	if err != nil {
+		return nix.Hash{}, nil, err
+	}
+	drv, err := zbstore.ParseDerivationObject(ctx, drvObject)
+	if err != nil {
+		return nix.Hash{}, nil, err
+	}
+	drvHash, err = drv.SHA256RealizationHash(f)
+	if err != nil {
+		return nix.Hash{}, nil, err
+	}
+	return drvHash, derivers, nil
+}
+
+// diffObjectInfo compares an object with its [*zbstorerpc.ObjectInfo].
+// It returns an empty string if and only if the information is equivalent.
+func diffObjectInfo(ctx context.Context, want zbstore.Object, got *zbstorerpc.ObjectInfo) string {
 	var ht nix.HashType
 	if got != nil {
 		ht = got.NARHash.Type()
@@ -474,10 +1030,12 @@ func wantObjectInfo(got *zbstorerpc.ObjectInfo, blob *zbstore.Blob) *zbstorerpc.
 		ht = nix.SHA256
 	}
 	h := nix.NewHasher(ht)
-	h.Write(blob.NAR)
-	want := new(*blob.Info())
-	want.NARHash = h.SumHash()
-	return zbstorerpc.NewObjectInfo(want)
+	if err := want.WriteNAR(ctx, h); err != nil {
+		return "WriteNAR error: " + err.Error()
+	}
+	wantInfo := zbstorerpc.NewObjectInfo(want.Info())
+	wantInfo.NARHash = h.SumHash()
+	return cmp.Diff(wantInfo, got)
 }
 
 func storeCodec(ctx context.Context, client *jsonrpc.Client) (codec *zbstorerpc.Codec, release func(), err error) {

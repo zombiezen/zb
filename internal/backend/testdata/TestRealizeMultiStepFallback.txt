@@ -1,0 +1,169 @@
+# Write realizations.
+[x86_64] [linux] storepath 0p34frm381dnk9332y7rf4yxwlbsphqh-hello2.txt.drv
+[aarch64] [linux] storepath m3lya30agjc5arf2pm65ns5594mjbdil-hello2.txt.drv
+[aarch64] [macos] storepath bxnr0kvx82rga2hf2bp0zfjnf03llpqd-hello2.txt.drv
+[x86_64] [windows] storepath 7l1w4xi4yw958ngpch1k0ry8gcqr2yzw-hello2.txt.drv
+read drv1
+write-realization ${drv1}!out bkqixh2mcz01b5qh0nbfrd5hxlw3rszf-hello2.txt
+
+[x86_64] [linux] storepath pvirhrv9a4i9p6hh4d9z0pwzb0xh3fsf-hello4.txt.drv
+[aarch64] [linux] storepath w3gvj3sw3a8vnp342sirkkdmkh0kp02y-hello4.txt.drv
+[aarch64] [macos] storepath 2vnjvmrijalc9idb5dvxbpqd66kxfxhs-hello4.txt.drv
+[x86_64] [windows] storepath w8lksj9ni7d33m7v18623572jzfd9lrw-hello4.txt.drv
+read drv2
+write-realization ${drv2}!out fycwwbcwl87fxmybg1lciygv2hv5k2gk-hello4.txt
+
+# Build.
+realize $drv2
+
+# Check output.
+realpath $out
+read realOut
+grep '\AHello, World!\nHello, World!\nHello, World!\nHello, World!\n\z' $realOut
+
+-- jj24kz6i96lk2arql8642d84zsp210mv-hello.txt --
+Hello, World!
+-- 0p34frm381dnk9332y7rf4yxwlbsphqh-hello2.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [],
+  ["/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "exit 1"
+  ],
+  [
+    ("in", "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- m3lya30agjc5arf2pm65ns5594mjbdil-hello2.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [
+    "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"
+  ],
+  "aarch64-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "exit 1"
+  ],
+  [
+    ("in", "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- bxnr0kvx82rga2hf2bp0zfjnf03llpqd-hello2.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [
+    "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"
+  ],
+  "aarch64-apple-macos",
+  "/bin/sh",
+  [
+    "-c",
+    "exit 1"
+  ],
+  [
+    ("in", "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- 7l1w4xi4yw958ngpch1k0ry8gcqr2yzw-hello2.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [],
+  ["C:\\zb\\store\\jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"],
+  "x86_64-pc-windows",
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  [
+    "-Command",
+    "exit 1"
+  ],
+  [
+    ("in", "C:\\zb\\store\\jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- pvirhrv9a4i9p6hh4d9z0pwzb0xh3fsf-hello4.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [("/opt/zb/store/0p34frm381dnk9332y7rf4yxwlbsphqh-hello2.txt.drv", ["out"])],
+  [],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "exit 1"
+  ],
+  [
+    ("in", "/149hjhsvi7rih0bqzs02f5iyjrj0zwwj6dw17zn231llk7r0syq6"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- w3gvj3sw3a8vnp342sirkkdmkh0kp02y-hello4.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [
+    ("/opt/zb/store/m3lya30agjc5arf2pm65ns5594mjbdil-hello2.txt.drv", ["out"])
+  ],
+  [],
+  "aarch64-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "exit 1"
+  ],
+  [
+    ("in", "/093ipd130v53kv01c4yglj0gymfw8cvkziankvzwj0qh9wc9x0dn"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- 2vnjvmrijalc9idb5dvxbpqd66kxfxhs-hello4.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [
+    ("/opt/zb/store/bxnr0kvx82rga2hf2bp0zfjnf03llpqd-hello2.txt.drv", ["out"])
+  ],
+  [],
+  "aarch64-apple-macos",
+  "/bin/sh",
+  [
+    "-c",
+    "exit 1"
+  ],
+  [
+    ("in", "/15n24bkkcby6sni7ijfnq60kqnqypd0r5qc0c12agk3ivsc9wagc"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- w8lksj9ni7d33m7v18623572jzfd9lrw-hello4.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [("C:\\zb\\store\\7l1w4xi4yw958ngpch1k0ry8gcqr2yzw-hello2.txt.drv", ["out"])],
+  [],
+  "x86_64-pc-windows",
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  [
+    "-Command",
+    "exit 1"
+  ],
+  [
+    ("in", "/0ccjln8bdkcpihi9svd76kvfx266ab9cf39cnjzc293nc7jrngy1"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- [null] bkqixh2mcz01b5qh0nbfrd5hxlw3rszf-hello2.txt --
+Hello, World!
+Hello, World!
+-- [fallback] fycwwbcwl87fxmybg1lciygv2hv5k2gk-hello4.txt --
+Hello, World!
+Hello, World!
+Hello, World!
+Hello, World!

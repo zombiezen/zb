@@ -1,13 +1,18 @@
+# Write realization that can't possibly be used as hello2.txt.
+[x86_64] [linux] storepath 005w7ss1jkgdwk1138wwpd6s62v1dl9a-hello2.txt.drv
+[aarch64] [linux] storepath 8mxgg6bd7z5br7grz82bm47lk3w25avq-hello2.txt.drv
+[aarch64] [macos] storepath vpfywiz8s7i00kir1n658dj36m4077ja-hello2.txt.drv
+[x86_64] [windows] storepath kblf67q43afh4yb1iby27ccwp6zhxyzk-hello2.txt.drv
+read drvPath
+write-realization ${drvPath}!out ixg4ca12hgdxsv6x2zy4lz3shwjj7imd-bork.txt
+
 # Build derivation.
-[x86_64] [linux] realize 005w7ss1jkgdwk1138wwpd6s62v1dl9a-hello2.txt.drv
-[aarch64] [linux] realize 8mxgg6bd7z5br7grz82bm47lk3w25avq-hello2.txt.drv
-[aarch64] [macos] realize vpfywiz8s7i00kir1n658dj36m4077ja-hello2.txt.drv
-[x86_64] [windows] realize kblf67q43afh4yb1iby27ccwp6zhxyzk-hello2.txt.drv
+realize $drvPath
 
 # Check logs.
 stdout ^catcat$
 
-# Check that output matches.
+# Check that output ran builder.
 realpath $out
 read realOut
 grep '\AHello, World!\nHello, World!\n\z' $realOut
@@ -79,3 +84,5 @@ Derive(
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
+-- [fallback] ixg4ca12hgdxsv6x2zy4lz3shwjj7imd-bork.txt --
+INCORRECT

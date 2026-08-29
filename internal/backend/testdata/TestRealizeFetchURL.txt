@@ -1,0 +1,18 @@
+realize z1w4sfxs2n4ys8b260zhsrfg6fhcxss8-hello.txt.drv
+realpath $out
+read realOut
+grep '^Hello, World!$' $realOut
+
+-- z1w4sfxs2n4ys8b260zhsrfg6fhcxss8-hello.txt.drv --
+Derive(
+  [("out", "", "sha256", "c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31")],
+  [],
+  [],
+  "builtin",
+  "builtin:fetchurl",
+  [],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9"),
+    ("url", "@url@")
+  ]
+)

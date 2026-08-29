@@ -1,10 +1,16 @@
--- 00000000000000000000000000000000-hello.txt --
+exists jj24kz6i96lk2arql8642d84zsp210mv-hello.txt
+cmpinfo jj24kz6i96lk2arql8642d84zsp210mv-hello.txt
+
+exists 0ymnghrxln444mzsm10wslxf9jwiknyb-a.drv
+cmpinfo 0ymnghrxln444mzsm10wslxf9jwiknyb-a.drv
+
+-- jj24kz6i96lk2arql8642d84zsp210mv-hello.txt --
 Hello, World!
--- 00000000000000000000000000000000-a.drv --
+-- 0ymnghrxln444mzsm10wslxf9jwiknyb-a.drv --
 Derive(
   [("out", "", "r:sha256", "")],
   [],
-  ["/opt/zb/store/00000000000000000000000000000000-hello.txt"],
+  ["/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"],
   "x86_64-unknown-linux",
   "true",
   [],

@@ -1,11 +1,17 @@
-# Build derivation.
+# Build derivation first time.
+[x86_64] [linux] realize 005w7ss1jkgdwk1138wwpd6s62v1dl9a-hello2.txt.drv
+[aarch64] [linux] realize 8mxgg6bd7z5br7grz82bm47lk3w25avq-hello2.txt.drv
+[aarch64] [macos] realize vpfywiz8s7i00kir1n658dj36m4077ja-hello2.txt.drv
+[x86_64] [windows] realize kblf67q43afh4yb1iby27ccwp6zhxyzk-hello2.txt.drv
+
+# Build derivation second time.
 [x86_64] [linux] realize 005w7ss1jkgdwk1138wwpd6s62v1dl9a-hello2.txt.drv
 [aarch64] [linux] realize 8mxgg6bd7z5br7grz82bm47lk3w25avq-hello2.txt.drv
 [aarch64] [macos] realize vpfywiz8s7i00kir1n658dj36m4077ja-hello2.txt.drv
 [x86_64] [windows] realize kblf67q43afh4yb1iby27ccwp6zhxyzk-hello2.txt.drv
 
 # Check logs.
-stdout ^catcat$
+! stdout ^catcat$
 
 # Check that output matches.
 realpath $out

@@ -1,6 +1,23 @@
-Build graph that is large enough to replicate https://github.com/256lights/zb/issues/288.
+# Regression test for https://github.com/256lights/zb/issues/288.
 
--- 9vx0ap4n2lpv5gxsb655vx6l4d92l65h-hello-x86_64-linux.txt.drv --
+# Build part of the graph.
+[x86_64] [linux] realize vz89da3z628n94w7wgfrsyapgr3wjcjh-bye2.txt.drv
+[aarch64] [linux] realize w877w613mam8m97wadk9qgrppw272pzz-bye2.txt.drv
+[aarch64] [macos] realize l9n7w0d9sljz1gjpp51n2855xm5rrni1-bye2.txt.drv
+[x86_64] [windows] realize f7q72f9sqcbkh8br8mf11jd8d3sgisl2-bye2.txt.drv
+
+# Build to end of graph.
+[x86_64] [linux] realize iw98ygpnzfydzdi2pw7rzmklqsvn1vb2-final.txt.drv
+[aarch64] [linux] realize 06a316a1zls3jxvscxdalddcjzbw4ljf-final.txt.drv
+[aarch64] [macos] realize 89bql9jq5615m3917cwdc7ka2wx9zygi-final.txt.drv
+[x86_64] [windows] realize 1mbda5cb2jgjqk5d929p7lbq4859xp3p-final.txt.drv
+
+# Check output.
+realpath $out
+read realOut
+grep '\AHello, World!\nHello, World!\nHello, World!\nHello, World!\nGood-bye\nGood-bye\n\z' $realOut
+
+-- 9vx0ap4n2lpv5gxsb655vx6l4d92l65h-hello.txt.drv --
 Derive(
   [("out", "", "r:sha256", "")],
   [],
@@ -12,7 +29,7 @@ Derive(
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- fmw7jw6az4b9awgfyfnxwjdvgmysw9r5-hello-aarch64-linux.txt.drv --
+-- fmw7jw6az4b9awgfyfnxwjdvgmysw9r5-hello.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [],
@@ -27,7 +44,7 @@ Derive(
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- iig0kq9qmld6d20h1i9njvny879jb67h-hello-aarch64-apple-macos.txt.drv --
+-- iig0kq9qmld6d20h1i9njvny879jb67h-hello.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [],
@@ -42,7 +59,7 @@ Derive(
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- yf81wgl5mizi79sgz57x5qv6gypyv5cn-hello-x86_64-pc-windows.txt.drv --
+-- yf81wgl5mizi79sgz57x5qv6gypyv5cn-hello.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [],
@@ -57,26 +74,26 @@ Derive(
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- xdp9xdmj863wmjcmkklqnw1zjng5y4a2-hello2-x86_64-linux.txt.drv --
+-- xdp9xdmj863wmjcmkklqnw1zjng5y4a2-hello2.txt.drv --
 Derive(
   [("out", "", "r:sha256", "")],
   [
-    ("/opt/zb/store/9vx0ap4n2lpv5gxsb655vx6l4d92l65h-hello-x86_64-linux.txt.drv", ["out"])
+    ("/opt/zb/store/9vx0ap4n2lpv5gxsb655vx6l4d92l65h-hello.txt.drv", ["out"])
   ],
   [],
   "x86_64-unknown-linux",
   "/bin/sh",
   ["-c","while read line; do echo \"$line\"; done < $in > $out; while read line; do echo \"$line\"; done < $in >> $out"],
   [
-    ("in", "/0ypmfyr6krqfbq68v18q1yhmqfmfm7grszwczpbggv4vdgabzd79"),
+    ("in", "/17qqgkj0ghr50cv5c3pif901fa6748nw4avgpwcr0gyzkmwjla6s"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- 91794yh4q5kfm3vyhqrlm7kk6261pw62-hello2-aarch64-linux.txt.drv --
+-- 3c582nz3hsz47wrq49bk2pspip72wa11-hello2.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [
-    ("/opt/zb/store/fmw7jw6az4b9awgfyfnxwjdvgmysw9r5-hello-aarch64-linux.txt.drv", ["out"])
+    ("/opt/zb/store/fmw7jw6az4b9awgfyfnxwjdvgmysw9r5-hello.txt.drv", ["out"])
   ],
   [],
   "aarch64-linux",
@@ -86,15 +103,15 @@ Derive(
     "while read line; do echo \"$line\"; done < $in > $out; while read line; do echo \"$line\"; done < $in >> $out"
   ],
   [
-    ("in", "/0csvnmiqc2s50szq1mbfrfr1m9sdrg27nrly395j8j7sjns6zl07"),
+    ("in", "/0lbihp7d26wp8mqrzm5bn1xw1jjldrg5gcripp0hmnvc2nhzqbzn"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- hbl8h5lgswz8dwavrlpnxsk87mmnsjy0-hello2-aarch64-apple-macos.txt.drv --
+-- db25y5rmhhhj5mrnc767jmy6hvh7yazn-hello2.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [
-    ("/opt/zb/store/iig0kq9qmld6d20h1i9njvny879jb67h-hello-aarch64-apple-macos.txt.drv", ["out"])
+    ("/opt/zb/store/iig0kq9qmld6d20h1i9njvny879jb67h-hello.txt.drv", ["out"])
   ],
   [],
   "aarch64-apple-macos",
@@ -104,15 +121,15 @@ Derive(
     "while read line; do echo \"$line\"; done < $in > $out; while read line; do echo \"$line\"; done < $in >> $out"
   ],
   [
-    ("in", "/03chkd7yjqpz9hw4vs8636c3im5z8ii534qwsm5srz1pzjw6w2lj"),
+    ("in", "/1hpfjj6r99hpp49yqanha3376j5w5admnmkssg7ra9dnf08gcjwy"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- wm1qj7haz2z2fp1ah18q0y0igm4vpqfw-hello2-x86_64-pc-windows.txt.drv --
+-- wm1qj7haz2z2fp1ah18q0y0igm4vpqfw-hello2.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [
-    ("C:\\zb\\store\\yf81wgl5mizi79sgz57x5qv6gypyv5cn-hello-x86_64-pc-windows.txt.drv", ["out"])
+    ("C:\\zb\\store\\yf81wgl5mizi79sgz57x5qv6gypyv5cn-hello.txt.drv", ["out"])
   ],
   [],
   "x86_64-pc-windows",
@@ -122,30 +139,30 @@ Derive(
     "$x = Get-Content -Raw ${env:in} ; ($x + $x) | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}"
   ],
   [
-    ("in", "/0iz56lmsxkx1g00xmfj4r0wlv64sxzvprfy4mfmszrfcm7l4345g"),
+    ("in", "/05x0plgh6c5scp08470dznki1aa37d5v6xwy5p0zv9z07dqiisbv"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- l8lk7nq77yvh4x3nwqbj5sdhicw5fcfr-hello4-x86_64-linux.txt.drv --
+-- l8lk7nq77yvh4x3nwqbj5sdhicw5fcfr-hello4.txt.drv --
 Derive(
   [("out", "", "r:sha256", "")],
   [
-    ("/opt/zb/store/xdp9xdmj863wmjcmkklqnw1zjng5y4a2-hello2-x86_64-linux.txt.drv", ["out"])
+    ("/opt/zb/store/xdp9xdmj863wmjcmkklqnw1zjng5y4a2-hello2.txt.drv", ["out"])
   ],
   [],
   "x86_64-unknown-linux",
   "/bin/sh",
   ["-c","while read line; do echo \"$line\"; done < $in > $out; while read line; do echo \"$line\"; done < $in >> $out"],
   [
-    ("in", "/03aqn181ihw8cjkfpfxpx1wkhrgv9p01xxp77wawycdqwg7288zf"),
+    ("in", "/0m093lxlah0xqk9pjir0iy58zrkhznai2h9pla5bifv4k8kj0rgl"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- y1mp6jscn0pncxpyl92rp9rjd2j7bx73-hello4-aarch64-linux.txt.drv --
+-- hn4c0zbc3b910y5dyq553nq9vc0ljavi-hello4.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [
-    ("/opt/zb/store/91794yh4q5kfm3vyhqrlm7kk6261pw62-hello2-aarch64-linux.txt.drv", ["out"])
+    ("/opt/zb/store/3c582nz3hsz47wrq49bk2pspip72wa11-hello2.txt.drv", ["out"])
   ],
   [],
   "aarch64-linux",
@@ -155,15 +172,15 @@ Derive(
     "while read line; do echo \"$line\"; done < $in > $out; while read line; do echo \"$line\"; done < $in >> $out"
   ],
   [
-    ("in", "/0vrk8178j5x6rw6d3fpwh72fd31gp5s7fqzakqzs6iw383y7i5rk"),
+    ("in", "/0hfgm58g9kfgfsnz2j3p2gsq3hbzw9h10sm8adf5aarchagia2cs"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- 79vcf1kqisjirha79d5y32qgdgn5103y-hello4-aarch64-apple-macos.txt.drv --
+-- zzd7d8sb2342ijv3kvhlqyhigfwzad3l-hello4.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [
-    ("/opt/zb/store/hbl8h5lgswz8dwavrlpnxsk87mmnsjy0-hello2-aarch64-apple-macos.txt.drv", ["out"])
+    ("/opt/zb/store/db25y5rmhhhj5mrnc767jmy6hvh7yazn-hello2.txt.drv", ["out"])
   ],
   [],
   "aarch64-apple-macos",
@@ -173,15 +190,15 @@ Derive(
     "while read line; do echo \"$line\"; done < $in > $out; while read line; do echo \"$line\"; done < $in >> $out"
   ],
   [
-    ("in", "/102h2pvxk1gvrwydm66j6k8a29l2cwic2pxx14h3p1mf4i5wyhmk"),
+    ("in", "/0dv0fj6fdj4zl6b1gf55xmrc6cjhn3h9lmrlyrd9xppf0l2cxznq"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- vij2bxvz5s0j2msgjfnv9g2vnfi1n2fl-hello4-x86_64-pc-windows.txt.drv --
+-- vij2bxvz5s0j2msgjfnv9g2vnfi1n2fl-hello4.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [
-    ("C:\\zb\\store\\wm1qj7haz2z2fp1ah18q0y0igm4vpqfw-hello2-x86_64-pc-windows.txt.drv", ["out"])
+    ("C:\\zb\\store\\wm1qj7haz2z2fp1ah18q0y0igm4vpqfw-hello2.txt.drv", ["out"])
   ],
   [],
   "x86_64-pc-windows",
@@ -191,11 +208,11 @@ Derive(
     "$x = Get-Content -Raw ${env:in} ; ($x + $x) | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}"
   ],
   [
-    ("in", "/1icfmsavy11w28x9c05y8pma7s3inkz77mkljqa4h0lc89a6x2nl"),
+    ("in", "/0q1w1gcdykflqvxc5smqxs4qcqw36bbz02fwl9l08fnkajnpk6gh"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- 98rbkkjrk660n3v7bfvpgyl31hzfikc2-bye-x86_64-linux.txt.drv --
+-- 98rbkkjrk660n3v7bfvpgyl31hzfikc2-bye.txt.drv --
 Derive(
   [("out", "", "r:sha256", "")],
   [],
@@ -207,7 +224,7 @@ Derive(
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- 67w04g06pkp274b1b5ppypifg0ys96ix-bye-aarch64-linux.txt.drv --
+-- 67w04g06pkp274b1b5ppypifg0ys96ix-bye.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [],
@@ -222,7 +239,7 @@ Derive(
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- 53rilghb8szpc1fg4cznyq0flvfzg7zm-bye-aarch64-apple-macos.txt.drv --
+-- 53rilghb8szpc1fg4cznyq0flvfzg7zm-bye.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [],
@@ -237,7 +254,7 @@ Derive(
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- l3bwyiswnxsjkfr66v5b5vbpq5pdrg2y-bye-x86_64-pc-windows.txt.drv --
+-- l3bwyiswnxsjkfr66v5b5vbpq5pdrg2y-bye.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [],
@@ -252,26 +269,26 @@ Derive(
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- vz89da3z628n94w7wgfrsyapgr3wjcjh-bye2-x86_64-linux.txt.drv --
+-- vz89da3z628n94w7wgfrsyapgr3wjcjh-bye2.txt.drv --
 Derive(
   [("out", "", "r:sha256", "")],
   [
-    ("/opt/zb/store/98rbkkjrk660n3v7bfvpgyl31hzfikc2-bye-x86_64-linux.txt.drv", ["out"])
+    ("/opt/zb/store/98rbkkjrk660n3v7bfvpgyl31hzfikc2-bye.txt.drv", ["out"])
   ],
   [],
   "x86_64-unknown-linux",
   "/bin/sh",
   ["-c","while read line; do echo \"$line\"; done < $in > $out; while read line; do echo \"$line\"; done < $in >> $out"],
   [
-    ("in", "/10wj9fsi5m229xcp2qhy7igzy767ih7ankb8w0xg47w2lh4pg8dj"),
+    ("in", "/1rdi1kczwppvjlpv2bjmq6qgzp9vzf233g3b8p5n8k6mm3qbah9b"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- rfaij2rp5gahmzlyr4wrw2m43cdpmjl0-bye2-aarch64-linux.txt.drv --
+-- w877w613mam8m97wadk9qgrppw272pzz-bye2.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [
-    ("/opt/zb/store/67w04g06pkp274b1b5ppypifg0ys96ix-bye-aarch64-linux.txt.drv", ["out"])
+    ("/opt/zb/store/67w04g06pkp274b1b5ppypifg0ys96ix-bye.txt.drv", ["out"])
   ],
   [],
   "aarch64-linux",
@@ -281,15 +298,15 @@ Derive(
     "while read line; do echo \"$line\"; done < $in > $out; while read line; do echo \"$line\"; done < $in >> $out"
   ],
   [
-    ("in", "/12waw4c2r2wj95m2ndf0pkcz5w923l6jjajp4ln27gvh5n9kv2sh"),
+    ("in", "/19bfgk3km9q6pmvdjax0l9q9mlxkibcnzd7qw74hdfjlljf7y75c"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- 6p6bm5z98bcnxj30l59xa2gpij47hyrw-bye2-aarch64-apple-macos.txt.drv --
+-- l9n7w0d9sljz1gjpp51n2855xm5rrni1-bye2.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [
-    ("/opt/zb/store/53rilghb8szpc1fg4cznyq0flvfzg7zm-bye-aarch64-apple-macos.txt.drv", ["out"])
+    ("/opt/zb/store/53rilghb8szpc1fg4cznyq0flvfzg7zm-bye.txt.drv", ["out"])
   ],
   [],
   "aarch64-apple-macos",
@@ -299,15 +316,15 @@ Derive(
     "while read line; do echo \"$line\"; done < $in > $out; while read line; do echo \"$line\"; done < $in >> $out"
   ],
   [
-    ("in", "/1zp6ddnw5mj1wgnx1fm95s86pzh23sawzlarj81339jz1b5vsm2l"),
+    ("in", "/0503p20nz8dw30080pmxvl7xm90dg20pfsjj75ph6h5by3xc9nzw"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- f7q72f9sqcbkh8br8mf11jd8d3sgisl2-bye2-x86_64-pc-windows.txt.drv --
+-- f7q72f9sqcbkh8br8mf11jd8d3sgisl2-bye2.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [
-    ("C:\\zb\\store\\l3bwyiswnxsjkfr66v5b5vbpq5pdrg2y-bye-x86_64-pc-windows.txt.drv", ["out"])
+    ("C:\\zb\\store\\l3bwyiswnxsjkfr66v5b5vbpq5pdrg2y-bye.txt.drv", ["out"])
   ],
   [],
   "x86_64-pc-windows",
@@ -317,33 +334,33 @@ Derive(
     "$x = Get-Content -Raw ${env:in} ; ($x + $x) | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}"
   ],
   [
-    ("in", "/05y5j30f109jnq80lhym3p5ch8rl7a4m6a1pwz8vic1qfn64fk0y"),
+    ("in", "/1awv4x6452i9qfvpc1w8m42bnaaqn7d78haf6q52zbska321fyz7"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- iw98ygpnzfydzdi2pw7rzmklqsvn1vb2-final-x86_64-linux.txt.drv --
+-- iw98ygpnzfydzdi2pw7rzmklqsvn1vb2-final.txt.drv --
 Derive(
   [("out", "", "r:sha256", "")],
   [
-    ("/opt/zb/store/l8lk7nq77yvh4x3nwqbj5sdhicw5fcfr-hello4-x86_64-linux.txt.drv", ["out"]),
-    ("/opt/zb/store/vz89da3z628n94w7wgfrsyapgr3wjcjh-bye2-x86_64-linux.txt.drv", ["out"])
+    ("/opt/zb/store/l8lk7nq77yvh4x3nwqbj5sdhicw5fcfr-hello4.txt.drv", ["out"]),
+    ("/opt/zb/store/vz89da3z628n94w7wgfrsyapgr3wjcjh-bye2.txt.drv", ["out"])
   ],
   [],
   "x86_64-unknown-linux",
   "/bin/sh",
   ["-c","while read line; do echo \"$line\"; done < $in1 >> $out; while read line; do echo \"$line\"; done < $in2 >> $out"],
   [
-    ("in1", "/0kahkvim0kqj524m258qi83jc6y60j0dcbqgxvrvrf8ba4h85611"),
-    ("in2", "/10f2dadv5isiscwzk6sqfmhkps7g4qhv067bijmslnwh69gwmdrj"),
+    ("in1", "/0p4pihhx1n71y83njzf6sm49ibvkrc7dj86g86xcdpgwwalnndjj"),
+    ("in2", "/0ar0wcxn8a1ijwh39ypsgyf7gzk06v06v8k5xdy38cdnw2m81kqp"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- p9dyf459lm32qk5ybpwxih90l75ywy9i-final-aarch64-linux.txt.drv --
+-- 06a316a1zls3jxvscxdalddcjzbw4ljf-final.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [
-    ("/opt/zb/store/rfaij2rp5gahmzlyr4wrw2m43cdpmjl0-bye2-aarch64-linux.txt.drv", ["out"]),
-    ("/opt/zb/store/y1mp6jscn0pncxpyl92rp9rjd2j7bx73-hello4-aarch64-linux.txt.drv", ["out"])
+    ("/opt/zb/store/hn4c0zbc3b910y5dyq553nq9vc0ljavi-hello4.txt.drv", ["out"]),
+    ("/opt/zb/store/w877w613mam8m97wadk9qgrppw272pzz-bye2.txt.drv", ["out"])
   ],
   [],
   "aarch64-linux",
@@ -353,17 +370,17 @@ Derive(
     "while read line; do echo \"$line\"; done < $in1 >> $out; while read line; do echo \"$line\"; done < $in2 >> $out"
   ],
   [
-    ("in1", "/0jlmarw67248ry4b6xnaq2wm4az2l5vyny8skcxqlzkb4bk6pqfl"),
-    ("in2", "/0wad33jk6r8xqik957vpb0bcwq8nlm5ikh4hb1fz834kk9sdwg92"),
+    ("in1", "/092vy5m4l0a9m05r2vjgr8dpww0rxq5ckr0qdbyh3dk58y9h93r3"),
+    ("in2", "/0x8vwlbzgh19vgq3qhq55p78kbcwy453xav8f02bis0ycfnx49i9"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- bkbn4rx0rar5qiw2h22k60bf5zvzyr9a-final-aarch64-apple-macos.txt.drv --
+-- 89bql9jq5615m3917cwdc7ka2wx9zygi-final.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [
-    ("/opt/zb/store/6p6bm5z98bcnxj30l59xa2gpij47hyrw-bye2-aarch64-apple-macos.txt.drv", ["out"]),
-    ("/opt/zb/store/79vcf1kqisjirha79d5y32qgdgn5103y-hello4-aarch64-apple-macos.txt.drv", ["out"])
+    ("/opt/zb/store/l9n7w0d9sljz1gjpp51n2855xm5rrni1-bye2.txt.drv", ["out"]),
+    ("/opt/zb/store/zzd7d8sb2342ijv3kvhlqyhigfwzad3l-hello4.txt.drv", ["out"])
   ],
   [],
   "aarch64-apple-macos",
@@ -373,17 +390,17 @@ Derive(
     "while read line; do echo \"$line\"; done < $in1 >> $out; while read line; do echo \"$line\"; done < $in2 >> $out"
   ],
   [
-    ("in1", "/1f5hncxxfgmgaz467fqcwdcmgl3pvhqvjbi8kvp09a6diqnlpcq8"),
-    ("in2", "/1biaml1q2nm42vp56nfjx9ymq2hspxnza2q6z4ymn10ccc6d3kwv"),
+    ("in1", "/0paa15h7scdc9phlzgdab3dvjsf4f4s3xshyfji4f3kixmp9844k"),
+    ("in2", "/0g3z353dr5mbszya57qx1jbai1gxk5bfrlw12igwpkxmz97agj3q"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- 1mbda5cb2jgjqk5d929p7lbq4859xp3p-final-x86_64-pc-windows.txt.drv --
+-- 1mbda5cb2jgjqk5d929p7lbq4859xp3p-final.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [
-    ("C:\\zb\\store\\f7q72f9sqcbkh8br8mf11jd8d3sgisl2-bye2-x86_64-pc-windows.txt.drv", ["out"]),
-    ("C:\\zb\\store\\vij2bxvz5s0j2msgjfnv9g2vnfi1n2fl-hello4-x86_64-pc-windows.txt.drv", ["out"])
+    ("C:\\zb\\store\\f7q72f9sqcbkh8br8mf11jd8d3sgisl2-bye2.txt.drv", ["out"]),
+    ("C:\\zb\\store\\vij2bxvz5s0j2msgjfnv9g2vnfi1n2fl-hello4.txt.drv", ["out"])
   ],
   [],
   "x86_64-pc-windows",
@@ -393,8 +410,8 @@ Derive(
     "$x = Get-Content -Raw ${env:in1} ; $y = Get-Content -Raw ${env:in2} ; ($x + $y) | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}"
   ],
   [
-    ("in1", "/11cywx92d47d7a5l1wrgcxiw1q9ax0ws900x5qz6fq38y2kx5ms0"),
-    ("in2", "/0ys8d5ncqv73h32fqvp7lqjqw97245q9n9fy81rbc8h5zn7rrhp9"),
+    ("in1", "/0nhijaxsnr7h4b3ri8yhby0w8iq2bdhnx40dwviwy5g1ivv0w38p"),
+    ("in2", "/0c6bf32hnsyh3kfrd81mcpj03v3a17qfkx11440085hkwqmb9wwq"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )

@@ -1,11 +1,28 @@
--- fzlh7i6bd96nkzarhmvnrvmm64gsivd2-hello.txt --
+# Store the input file in $in.
+storepath jj24kz6i96lk2arql8642d84zsp210mv-hello.txt
+read in
+
+# Build derivation.
+[x86_64] [linux] storepath g02shnii7wnd4bq23v9ah92px0gl8w4f-hello-path.txt.drv
+[aarch64] [linux] storepath wfc9gg6xnyqncxg8c3kdc0lvn9viymgj-hello-path.txt.drv
+[aarch64] [macos] storepath nbdbgk8sbpla4w7q9ad50g82al7lyybk-hello-path.txt.drv
+[x86_64] [windows] storepath ns9s9klhb0db6h99c8myc095k1hmi971-hello-path.txt.drv
+read drvPath
+realize $drvPath
+
+# Check that output has the store path.
+realpath $out
+read realOut
+grep $in $realOut
+
+-- jj24kz6i96lk2arql8642d84zsp210mv-hello.txt --
 Hello, World!
--- g02shnii7wnd4bq23v9ah92px0gl8w4f-hello-path-x86_64-linux.txt.drv --
+-- g02shnii7wnd4bq23v9ah92px0gl8w4f-hello-path.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [],
   [
-    "/opt/zb/store/fzlh7i6bd96nkzarhmvnrvmm64gsivd2-hello.txt"
+    "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"
   ],
   "x86_64-linux",
   "/bin/sh",
@@ -14,16 +31,16 @@ Derive(
     "echo \"$in\" > \"$out\""
   ],
   [
-    ("in", "/opt/zb/store/fzlh7i6bd96nkzarhmvnrvmm64gsivd2-hello.txt"),
+    ("in", "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- wfc9gg6xnyqncxg8c3kdc0lvn9viymgj-hello-path-aarch64-linux.txt.drv --
+-- wfc9gg6xnyqncxg8c3kdc0lvn9viymgj-hello-path.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [],
   [
-    "/opt/zb/store/fzlh7i6bd96nkzarhmvnrvmm64gsivd2-hello.txt"
+    "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"
   ],
   "aarch64-linux",
   "/bin/sh",
@@ -32,29 +49,29 @@ Derive(
     "echo \"$in\" > \"$out\""
   ],
   [
-    ("in", "/opt/zb/store/fzlh7i6bd96nkzarhmvnrvmm64gsivd2-hello.txt"),
+    ("in", "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- nbdbgk8sbpla4w7q9ad50g82al7lyybk-hello-path-aarch64-apple-macos.txt.drv --
+-- nbdbgk8sbpla4w7q9ad50g82al7lyybk-hello-path.txt.drv --
 Derive(
   [("out", "", "r:sha256", "")],
   [],
-  ["/opt/zb/store/fzlh7i6bd96nkzarhmvnrvmm64gsivd2-hello.txt"],
+  ["/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"],
   "aarch64-apple-macos",
   "/bin/sh",
   ["-c","echo \"$in\" > \"$out\""],
   [
-    ("in", "/opt/zb/store/fzlh7i6bd96nkzarhmvnrvmm64gsivd2-hello.txt"),
+    ("in", "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- ns9s9klhb0db6h99c8myc095k1hmi971-hello-path-x86_64-pc-windows.txt.drv --
+-- ns9s9klhb0db6h99c8myc095k1hmi971-hello-path.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [],
   [
-    "C:\\zb\\store\\fzlh7i6bd96nkzarhmvnrvmm64gsivd2-hello.txt"
+    "C:\\zb\\store\\jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"
   ],
   "x86_64-pc-windows",
   "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
@@ -63,7 +80,7 @@ Derive(
     "\"${env:in}`n\" | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}"
   ],
   [
-    ("in", "C:\\zb\\store\\fzlh7i6bd96nkzarhmvnrvmm64gsivd2-hello.txt"),
+    ("in", "C:\\zb\\store\\jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )

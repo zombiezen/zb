@@ -20,11 +20,13 @@ require (
 	github.com/klauspost/compress v1.19.1
 	github.com/tailscale/hujson v0.0.0-20250226034555-ec1d1c113d33
 	go4.org v0.0.0-20230225012048-214862532bf5
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
 	golang.org/x/tools v0.47.0
 	google.golang.org/api v0.289.0
+	rsc.io/script v0.0.2
 	zombiezen.com/go/bass v0.0.0-20230823162859-0399f01327dd
 	zombiezen.com/go/log v1.2.0
 	zombiezen.com/go/nix v0.0.0-20250514174927-d97ab08b45de
@@ -81,7 +83,6 @@ require (
 	golang.org/x/exp v0.0.0-20230315142452-642cacee5cc0 // indirect
 	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
-	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto v0.0.0-20260519071638-aa98bba5eb94 // indirect
