@@ -24,7 +24,8 @@ const (
 
 // An Exporter is a [Store] that can efficiently export objects.
 // The [Export] function will use this interface if available.
-// StoreExport must return an error if one or more of the paths named are not present in the store.
+// StoreExport must ignore paths not present in the store.
+//
 // StoreExport must be safe to call concurrently from multiple goroutines.
 type Exporter interface {
 	Store
@@ -49,6 +50,7 @@ type ExportOptions struct {
 // to dst in `nix-store --export` format.
 // If no paths are given, then an empty export will be written to dst
 // without using store.
+// Export will not return an error if a path does not exist in src.
 //
 // If store implements [Exporter], then Export will use store.Export to perform the export.
 // Otherwise, Export will query the store for all the objects needed
@@ -117,6 +119,11 @@ func expandClosure(ctx context.Context, store Store, objects []Object, maxConcur
 			}
 			return true
 		})
+		if i == -1 {
+			// Keep objects with missing references at the end of the export
+			// so others may succeed.
+			break
+		}
 		// Move object to front of unsorted slice.
 		unsorted[0], unsorted[i] = unsorted[i], unsorted[0]
 	}
@@ -138,10 +145,9 @@ func orderedObjectBatch(ctx context.Context, store Store, paths iter.Seq[Path], 
 		i := slices.IndexFunc(batch, func(obj Object) bool {
 			return obj.Info().StorePath == path
 		})
-		if i < 0 {
-			return nil, fmt.Errorf("store object %s: %w", path, ErrNotFound)
+		if i != -1 {
+			result = append(result, batch[i])
 		}
-		result = append(result, batch[i])
 	}
 	return result, nil
 }

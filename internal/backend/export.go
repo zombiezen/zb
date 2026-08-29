@@ -128,10 +128,11 @@ func (s *Server) fetchInfoForExport(ctx context.Context, paths []zbstore.Path) (
 	var result []*zbstore.ExportTrailer
 	for _, path := range paths {
 		info, err := pathInfo(conn, path)
-		if err != nil {
+		if err == nil {
+			result = append(result, info.ExportTrailer())
+		} else if err != nil && !errors.Is(err, zbstore.ErrNotFound) {
 			return nil, err
 		}
-		result = append(result, info.ExportTrailer())
 	}
 	return result, nil
 }
@@ -173,6 +174,8 @@ func (s *Server) findExportClosure(ctx context.Context, paths []zbstore.Path) ([
 			var info *zbstore.ObjectInfo
 			info, infoError = pathInfo(conn, pe.path)
 			if infoError != nil {
+				// Even a "not found" error here is bad,
+				// because it means we have an inconsistent store.
 				return false
 			}
 			result = append(result, info.ExportTrailer())
@@ -181,7 +184,7 @@ func (s *Server) findExportClosure(ctx context.Context, paths []zbstore.Path) ([
 		if infoError != nil {
 			return nil, infoError
 		}
-		if err != nil {
+		if err != nil && !errors.Is(err, zbstore.ErrNotFound) {
 			return nil, err
 		}
 	}

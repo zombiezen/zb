@@ -67,6 +67,8 @@ from roughly 10 minutes to XX seconds with a reasonably fast internet connection
 
 - `zb eval` now prints its output using Lua's `tostring` rules
   instead of its own formatting logic.
+- `zb store export` will succeed even if the arguments are not all present.
+  ([#203](https://github.com/256lights/zb/issues/203))
 - Attempting to run multiple `zb serve` processes
   on a single store database now results in an error.
   ([#207](https://github.com/256lights/zb/issues/207))
