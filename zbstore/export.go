@@ -183,6 +183,16 @@ type ExportTrailer struct {
 	ContentAddress ContentAddress
 }
 
+// Clone performs a deep copy of an [*ExportTrailer].
+func (t *ExportTrailer) Clone() *ExportTrailer {
+	if t == nil {
+		return nil
+	}
+	t = new(*t)
+	t.References = *t.References.Clone()
+	return t
+}
+
 // An ExportWriter serializes zero or more NARs to a stream
 // in `nix-store --export` format.
 type ExportWriter struct {

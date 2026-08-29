@@ -52,6 +52,16 @@ func (info *ObjectInfo) ExportTrailer() *ExportTrailer {
 	}
 }
 
+// Clone performs a deep copy of an [*ObjectInfo].
+func (info *ObjectInfo) Clone() *ObjectInfo {
+	if info == nil {
+		return nil
+	}
+	info = new(*info)
+	info.References = *info.References.Clone()
+	return info
+}
+
 // AppendText implements [encoding.TextAppender]
 // by appending a condensed version of a .narinfo file to dst.
 // Any zero values are omitted except for store path.
