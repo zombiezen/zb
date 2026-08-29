@@ -16,7 +16,7 @@ type ReadWriteSeekCloser interface {
 	io.Closer
 }
 
-// A type that implements Creator can create temporary byte buffers.
+// A Creator can create temporary byte buffers.
 // The [ReadWriteSeekCloser] returned from CreateBuffer
 // must be of the given size and start with its offset at 0.
 // If the size passed to CreateBuffer is less than 1,
@@ -31,8 +31,8 @@ type Creator interface {
 // CreateFunc is a function that implements [Creator].
 type CreateFunc func(size int64) (ReadWriteSeekCloser, error)
 
-// CreateTemp implements [Creator] by calling f.
-func (f CreateFunc) CreateTemp(size int64) (ReadWriteSeekCloser, error) {
+// CreateBuffer implements [Creator] by calling f.
+func (f CreateFunc) CreateBuffer(size int64) (ReadWriteSeekCloser, error) {
 	return f(size)
 }
 

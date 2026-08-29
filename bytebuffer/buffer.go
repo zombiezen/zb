@@ -23,7 +23,9 @@ type Buffer struct {
 
 // New returns a new [Buffer] reading from and writing to b.
 func New(p []byte) *Buffer {
-	return &Buffer{s: p, limit: math.MaxInt}
+	buf := new(Buffer)
+	buf.Reset(p)
+	return buf
 }
 
 // Reset resets the [Buffer] to be reading from and writing to b.
@@ -72,7 +74,7 @@ func (b *Buffer) UnreadByte() error {
 // If the offset is larger than the length of the underlying byte slice,
 // then the intervening bytes are zero-filled.
 func (b *Buffer) Write(p []byte) (n int, err error) {
-	if b.i > int64(b.limit-len(p)) {
+	if b.limit > 0 && b.i > int64(b.limit-len(p)) {
 		err = errTooLarge
 		if b.i >= int64(b.limit) {
 			return 0, err
@@ -130,11 +132,20 @@ func (b *Buffer) WriteTo(w io.Writer) (n int64, err error) {
 	return
 }
 
+// Bytes returns a slice of the buffer's content.
+// The slice is valid for use only until the next buffer modification
+// (that is, only until the next call to a method like [*Buffer.Write], [*Buffer.Reset], or [*Buffer.Truncate]).
+// The slice aliases the buffer content at least until the next buffer modification,
+// so immediate changes to the slice will affect the result of future reads.
+func (b *Buffer) Bytes() []byte {
+	return b.s
+}
+
 // Truncate changes the size of the buffer.
 // It does not change the I/O offset.
 func (b *Buffer) Truncate(size int64) error {
 	switch {
-	case size > int64(b.limit):
+	case b.limit > 0 && size > int64(b.limit):
 		return errTooLarge
 	case size < 0:
 		return fmt.Errorf("bytebuffer.Buffer.Truncate: negative size")
