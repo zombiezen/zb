@@ -11,9 +11,9 @@ import (
 	"math"
 	"strconv"
 
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/macho"
 	"zb.256lights.llc/pkg/internal/uuid8"
-	"zb.256lights.llc/pkg/internal/xio"
 	"zombiezen.com/go/nix"
 )
 
@@ -79,7 +79,7 @@ func Rewrite(f io.ReadWriteSeeker, baseOffset int64, newDigest string, rewriters
 		var b []byte
 		if readStart == readEnd {
 			var err error
-			b, err = rewriters[0].Rewrite(newDigest, xio.Null())
+			b, err = rewriters[0].Rewrite(newDigest, bytebuffer.Null{})
 			if err != nil {
 				return fmt.Errorf("rewrite hash: %v", err)
 			}

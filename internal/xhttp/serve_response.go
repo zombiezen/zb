@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/xio"
 )
 
@@ -19,7 +20,7 @@ func ServeResponse(req *http.Request, h http.Handler) *http.Response {
 	serveDone := make(chan struct{})
 	if req.Method == http.MethodHead {
 		rbody = xio.ReadFuncCloser{
-			Reader: xio.Null(),
+			Reader: bytebuffer.Null{},
 			CloseFunc: func() error {
 				<-serveDone
 				return nil

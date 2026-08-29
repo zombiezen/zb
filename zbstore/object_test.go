@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/testcontext"
-	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/sets"
 	"zombiezen.com/go/nix"
 	"zombiezen.com/go/nix/nar"
@@ -23,7 +23,7 @@ import (
 
 func TestVerifyObject(t *testing.T) {
 	t.Run("Empty", func(t *testing.T) {
-		ca, _, err := SourceSHA256ContentAddress(xio.Null(), nil)
+		ca, _, err := SourceSHA256ContentAddress(bytebuffer.Null{}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -245,7 +245,7 @@ func TestVerifyObject(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		badCA, _, err := SourceSHA256ContentAddress(xio.Null(), nil)
+		badCA, _, err := SourceSHA256ContentAddress(bytebuffer.Null{}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -288,7 +288,7 @@ func TestVerifyObject(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		badCA, _, err := SourceSHA256ContentAddress(xio.Null(), nil)
+		badCA, _, err := SourceSHA256ContentAddress(bytebuffer.Null{}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

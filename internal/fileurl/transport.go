@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/httpencoding"
 	"zb.256lights.llc/pkg/internal/xhttp"
-	"zb.256lights.llc/pkg/internal/xio"
 )
 
 // Transport is an [http.RoundTripper] that serves GET, HEAD, and PUT requests
@@ -178,7 +178,7 @@ func (t Transport) put(req *http.Request) (resp *http.Response) {
 		StatusCode: code,
 		Status:     xhttp.Status(code),
 		Header:     responseHeader,
-		Body:       io.NopCloser(xio.Null()),
+		Body:       bytebuffer.Null{},
 	}
 }
 

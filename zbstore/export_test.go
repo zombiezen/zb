@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"zb.256lights.llc/pkg/internal/xio"
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/sets"
 	"zombiezen.com/go/nix/nar"
 )
@@ -222,7 +222,7 @@ func TestExportWriter(t *testing.T) {
 
 	t.Run("StoreImport/Empty", func(t *testing.T) {
 		ew := NewExportWriter(io.Discard)
-		if err := ew.StoreImport(t.Context(), xio.Null()); err == nil {
+		if err := ew.StoreImport(t.Context(), bytebuffer.Null{}); err == nil {
 			t.Error("StoreImport did not return error")
 		} else {
 			t.Log("StoreImport:", err)
