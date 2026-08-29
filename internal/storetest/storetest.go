@@ -5,12 +5,15 @@
 package storetest
 
 import (
+	stdcmp "cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 
+	"github.com/google/go-cmp/cmp"
 	"zb.256lights.llc/pkg/bytebuffer"
+	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 )
 
@@ -149,4 +152,16 @@ func (bb *singleUseBuffer) Seek(offset int64, whence int) (int64, error) {
 
 func (bb *singleUseBuffer) Close() error {
 	return nil
+}
+
+// TransformSortedSet returns a [cmp.Option]
+// that converts sorted sets into slices.
+func TransformSortedSet[E stdcmp.Ordered]() cmp.Option {
+	return cmp.Transformer("TransformSortedSet", func(s sets.Sorted[E]) []E {
+		list := make([]E, s.Len())
+		for i := range list {
+			list[i] = s.At(i)
+		}
+		return list
+	})
 }

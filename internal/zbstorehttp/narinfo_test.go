@@ -4,11 +4,11 @@
 package zbstorehttp
 
 import (
-	stdcmp "cmp"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"zb.256lights.llc/pkg/internal/storetest"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/nix"
@@ -219,7 +219,7 @@ func TestNARInfoUnmarshalText(t *testing.T) {
 			if err != nil {
 				t.Fatal("UnmarshalText(...):", err)
 			}
-			if diff := cmp.Diff(test.want, got, transformSortedSet[zbstore.Path](), cmp.Comparer(compareSignatures)); diff != "" {
+			if diff := cmp.Diff(test.want, got, storetest.TransformSortedSet[zbstore.Path](), cmp.Comparer(compareSignatures)); diff != "" {
 				t.Errorf("after re-marshaling (-want +got):\n%s", diff)
 			}
 		})
@@ -253,7 +253,7 @@ func FuzzNARInfo(f *testing.F) {
 			cmp.Transformer("String", func(h nix.Hash) string {
 				return h.String()
 			}),
-			transformSortedSet[zbstore.Path](),
+			storetest.TransformSortedSet[zbstore.Path](),
 		}
 		if diff := cmp.Diff(info, got, opts); diff != "" {
 			t.Errorf("after re-marshaling (-want +got):\n%s", diff)
@@ -303,7 +303,7 @@ func TestNARInfoClone(t *testing.T) {
 	}
 	opts := cmp.Options{
 		cmp.Comparer(compareSignatures),
-		transformSortedSet[zbstore.Path](),
+		storetest.TransformSortedSet[zbstore.Path](),
 		cmpopts.EquateEmpty(),
 	}
 	if diff := cmp.Diff(want, original, opts); diff != "" {
@@ -342,14 +342,4 @@ func mustParseSignature(tb testing.TB, s string) *nix.Signature {
 		tb.Fatal(err)
 	}
 	return sig
-}
-
-func transformSortedSet[E stdcmp.Ordered]() cmp.Option {
-	return cmp.Transformer("transformSortedSet", func(s sets.Sorted[E]) []E {
-		list := make([]E, s.Len())
-		for i := range list {
-			list[i] = s.At(i)
-		}
-		return list
-	})
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"zb.256lights.llc/pkg/internal/fileurl"
+	"zb.256lights.llc/pkg/internal/storetest"
 	"zb.256lights.llc/pkg/internal/testcontext"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log/testlog"
@@ -48,7 +49,7 @@ func TestStoreObject(t *testing.T) {
 			NARSize:        128,
 			ContentAddress: nix.RecursiveFileContentAddress(caHash),
 		}
-		if diff := cmp.Diff(wantInfo, obj.Info(), transformSortedSet[zbstore.Path]()); diff != "" {
+		if diff := cmp.Diff(wantInfo, obj.Info(), storetest.TransformSortedSet[zbstore.Path]()); diff != "" {
 			t.Errorf("object info (-want +got):\n%s", diff)
 		}
 		h := nix.NewHasher(nix.SHA256)

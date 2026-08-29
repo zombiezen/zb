@@ -5,7 +5,6 @@ package backend_test
 
 import (
 	"bytes"
-	stdcmp "cmp"
 	"context"
 	"path/filepath"
 	"testing"
@@ -19,7 +18,6 @@ import (
 	"zb.256lights.llc/pkg/internal/storetest"
 	"zb.256lights.llc/pkg/internal/testcontext"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
-	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 )
 
@@ -168,7 +166,7 @@ func TestExport(t *testing.T) {
 				diff := cmp.Diff(
 					want, receiver.Blobs,
 					cmpopts.EquateEmpty(),
-					transformSortedSet[zbstore.Path](),
+					storetest.TransformSortedSet[zbstore.Path](),
 				)
 				if diff != "" {
 					t.Errorf("export (-want +got):\n%s", diff)
@@ -260,7 +258,7 @@ func TestExport(t *testing.T) {
 					diff := cmp.Diff(
 						want, receiver.Blobs,
 						cmpopts.EquateEmpty(),
-						transformSortedSet[zbstore.Path](),
+						storetest.TransformSortedSet[zbstore.Path](),
 					)
 					if diff != "" {
 						t.Errorf("export (-want +got):\n%s", diff)
@@ -269,14 +267,4 @@ func TestExport(t *testing.T) {
 			}
 		})
 	}
-}
-
-func transformSortedSet[E stdcmp.Ordered]() cmp.Option {
-	return cmp.Transformer("transformSortedSet", func(s sets.Sorted[E]) []E {
-		list := make([]E, s.Len())
-		for i := range list {
-			list[i] = s.At(i)
-		}
-		return list
-	})
 }
