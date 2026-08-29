@@ -430,3 +430,22 @@ type ExportRequest struct {
 	// Otherwise, paths that are referenced by those store objects will also be included.
 	ExcludeReferences bool `json:"excludeReferences"`
 }
+
+// NewExportRequest converts [*zbstore.ExportOptions] to an [*ExportRequest].
+func NewExportRequest(paths sets.Set[zbstore.Path], options *zbstore.ExportOptions) *ExportRequest {
+	req := &ExportRequest{
+		Paths:             make([]zbstore.Path, 0, len(paths)),
+		ExcludeReferences: options != nil && options.ExcludeReferences,
+	}
+	for path := range paths {
+		req.Paths = append(req.Paths, path)
+	}
+	return req
+}
+
+// ExportOptions returns the equivalent [*zbstore.ExportOptions].
+func (req *ExportRequest) ExportOptions() *zbstore.ExportOptions {
+	return &zbstore.ExportOptions{
+		ExcludeReferences: req.ExcludeReferences,
+	}
+}

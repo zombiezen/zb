@@ -10,7 +10,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"slices"
 	"strconv"
 	"sync"
 
@@ -95,11 +94,7 @@ func (s *Store) StoreImport(ctx context.Context, r io.Reader) error {
 // StoreExport depends on s.Handler being wired up to [*Store.Import].
 // Otherwise, StoreExport will block until ctx.Done() is closed.
 func (s *Store) StoreExport(ctx context.Context, dst io.Writer, paths sets.Set[zbstore.Path], opts *zbstore.ExportOptions) error {
-	req := &ExportRequest{
-		Paths:             slices.Collect(paths.All()),
-		ExcludeReferences: opts != nil && opts.ExcludeReferences,
-	}
-	if err := s.export(ctx, dst, req); err != nil {
+	if err := s.export(ctx, dst, NewExportRequest(paths, opts)); err != nil {
 		return fmt.Errorf("export store objects: %w", err)
 	}
 	return nil
