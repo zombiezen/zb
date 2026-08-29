@@ -16,7 +16,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"slices"
 	"sync"
@@ -47,14 +46,6 @@ type Store interface {
 type RandomAccessStore interface {
 	Store
 	StoreFS(ctx context.Context, dir Directory) fs.FS
-}
-
-// An Importer can receive serialized zb store objects
-// in the `nix-store --export` format.
-// If an Importer receives an object identical one it already has,
-// it should ignore the new object and it should not return an error.
-type Importer interface {
-	StoreImport(ctx context.Context, r io.Reader) error
 }
 
 // BatchStore is a [Store] that can efficiently query for multiple objects

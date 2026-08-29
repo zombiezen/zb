@@ -1,0 +1,5 @@
+-- mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt --
+Hello, World!
+-- cpkdqrc1w4kaklx7881c8c4lw46dzrf7-ref.txt --
+I have a ref!
+/opt/zb/store/mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt
