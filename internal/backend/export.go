@@ -11,33 +11,13 @@ import (
 	"slices"
 
 	jsonv2 "github.com/go-json-experiment/json"
+	"golang.org/x/sync/errgroup"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/nix/nar"
 )
-
-type exporterContextKey struct{}
-
-// A type that implements Exporter can receive a `nix-store --export` formatted stream.
-type Exporter interface {
-	Export(header jsonrpc.Header, r io.Reader) error
-}
-
-// WithExporter returns a copy of parent
-// in which the given exporter is used to send back export information.
-func WithExporter(parent context.Context, e Exporter) context.Context {
-	return context.WithValue(parent, exporterContextKey{}, e)
-}
-
-func exporterFromContext(ctx context.Context) Exporter {
-	e, _ := ctx.Value(exporterContextKey{}).(Exporter)
-	if e == nil {
-		e = stubExporter{}
-	}
-	return e
-}
 
 // Export exports the store objects according to the request
 // in `nix-store --export` format to dst.
@@ -71,40 +51,26 @@ func (s *Server) Export(ctx context.Context, dst io.Writer, req *zbstorerpc.Expo
 }
 
 func (s *Server) export(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
-	conn := exporterFromContext(ctx)
-	if conn == nil {
-		return nil, fmt.Errorf("internal error: no exporter present")
-	}
 	args := new(zbstorerpc.ExportRequest)
 	if err := jsonv2.Unmarshal(req.Params, args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
 
-	var header jsonrpc.Header
-	if idJSON := req.Extra[zbstorerpc.ExportIDExtraFieldName]; len(idJSON) > 0 {
-		var id string
-		if err := jsonv2.Unmarshal(idJSON, &id); err != nil {
-			return nil, jsonrpc.Error(jsonrpc.InvalidParams, fmt.Errorf("%s: %v", zbstorerpc.ExportIDExtraFieldName, err))
-		}
-		header = make(jsonrpc.Header)
-		header.Set(zbstorerpc.ExportIDHeaderName, id)
-	}
-
 	pr, pw := io.Pipe()
-	done := make(chan struct{})
-	go func() {
-		close(done)
-		pw.CloseWithError(s.Export(ctx, pw, args))
-	}()
-	defer func() {
-		<-done
-		pr.Close()
-	}()
-
-	if err := conn.Export(header, pr); err != nil {
-		return nil, err
-	}
-	return nil, nil
+	grp, ctx := errgroup.WithContext(ctx)
+	grp.Go(func() error {
+		err := s.Export(ctx, pw, args)
+		pw.CloseWithError(err)
+		return err
+	})
+	grp.Go(func() error {
+		err := zbstorerpc.ServeExport(ctx, pr)
+		pr.CloseWithError(err)
+		// Closing the pipe will cause the write to fail,
+		// and we want that error to come through.
+		return nil
+	})
+	return nil, grp.Wait()
 }
 
 // fetchInfoForExport generates export trailers for the given paths.
@@ -201,10 +167,4 @@ func (s *Server) findExportClosure(ctx context.Context, paths []zbstore.Path) ([
 	}
 
 	return result, nil
-}
-
-type stubExporter struct{}
-
-func (stubExporter) Export(header jsonrpc.Header, r io.Reader) error {
-	return errors.New("no exporter in context")
 }

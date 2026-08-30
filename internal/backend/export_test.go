@@ -14,10 +14,10 @@ import (
 	"golang.org/x/tools/txtar"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/backendtest"
-	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/storetest"
 	"zb.256lights.llc/pkg/internal/testcontext"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
+	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 )
 
@@ -110,52 +110,33 @@ func TestExport(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				receiver := new(storetest.BlobReceiver)
 				_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 					TempDir: t.TempDir(),
-					ClientOptions: zbstorerpc.CodecOptions{
-						Importer: zbstorerpc.NewReceiverImporter(receiver),
-					},
 				})
 				if err != nil {
 					t.Fatal(err)
 				}
 
 				// Import test data.
-				codec, releaseCodec, err := storeCodec(ctx, client)
-				if err != nil {
-					t.Fatal(err)
-				}
-				err = codec.Export(nil, bytes.NewReader(importData))
-				releaseCodec()
-				if err != nil {
+				if err := client.StoreImport(ctx, bytes.NewReader(importData)); err != nil {
 					t.Fatal(err)
 				}
 
-				// Call exists method.
-				// Exports don't send a response, so this introduces a sync point.
-				var exists bool
-				lastPath := records[len(records)-1].StorePath
-				err = jsonrpc.Do(ctx, client, zbstorerpc.ExistsMethod, &exists, &zbstorerpc.ExistsRequest{
-					Path: string(lastPath),
+				// Perform export.
+				paths := make(sets.Set[zbstore.Path])
+				for _, pathIndex := range test.paths {
+					paths.Add(records[pathIndex].StorePath)
+				}
+				buf := new(bytes.Buffer)
+				err = client.StoreExport(ctx, buf, paths, &zbstore.ExportOptions{
+					ExcludeReferences: test.excludeReferences,
 				})
 				if err != nil {
 					t.Error(err)
 				}
-				if !exists {
-					t.Errorf("store reports exists=false for %s", lastPath)
-				}
-
-				// Perform export.
-				req := &zbstorerpc.ExportRequest{
-					Paths:             make([]zbstore.Path, len(test.paths)),
-					ExcludeReferences: test.excludeReferences,
-				}
-				for i, pathIndex := range test.paths {
-					req.Paths[i] = records[pathIndex].StorePath
-				}
-				if err := jsonrpc.Do(ctx, client, zbstorerpc.ExportMethod, nil, req); err != nil {
-					t.Error("Export:", err)
+				receiver := new(storetest.BlobReceiver)
+				if err := zbstore.ReceiveExport(receiver, buf); err != nil {
+					t.Error(err)
 				}
 
 				// Check contents of export.
@@ -209,28 +190,8 @@ func TestExport(t *testing.T) {
 					}
 
 					// Import test data.
-					codec, releaseCodec, err := storeCodec(ctx, client)
-					if err != nil {
+					if err := client.StoreImport(ctx, bytes.NewReader(importData)); err != nil {
 						t.Fatal(err)
-					}
-					err = codec.Export(nil, bytes.NewReader(importData))
-					releaseCodec()
-					if err != nil {
-						t.Fatal(err)
-					}
-
-					// Call exists method.
-					// Exports don't send a response, so this introduces a sync point.
-					var exists bool
-					lastPath := records[len(records)-1].StorePath
-					err = jsonrpc.Do(ctx, client, zbstorerpc.ExistsMethod, &exists, &zbstorerpc.ExistsRequest{
-						Path: string(lastPath),
-					})
-					if err != nil {
-						t.Error(err)
-					}
-					if !exists {
-						t.Errorf("store reports exists=false for %s", lastPath)
 					}
 
 					// Perform export.

@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/auth/credentials"
@@ -31,7 +32,6 @@ import (
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/fileurl"
 	"zb.256lights.llc/pkg/internal/httpcache"
-	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/zbstorehttp"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
@@ -290,7 +290,19 @@ func (g *globalConfig) reusePolicy() *zbstorerpc.ReusePolicy {
 	return &zbstorerpc.ReusePolicy{PublicKeys: g.TrustedPublicKeys}
 }
 
-func (g *globalConfig) newHTTPClient() (*httpClient, io.Closer, error) {
+func (g *globalConfig) newHTTPClient() (_ *httpClient, cleanup func(), err error) {
+	if err := os.MkdirAll(filepath.Dir(g.HTTPCacheDB), 0o777); err != nil {
+		return nil, nil, err
+	}
+	var netrcData []byte
+	if g.NetrcPath == "" {
+		var err error
+		netrcData, err = os.ReadFile(g.NetrcPath)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, nil, err
+		}
+	}
+
 	baseTransport := &http.Transport{
 		// Settings copied from [http.DefaultTransport].
 		Proxy: http.ProxyFromEnvironment,
@@ -305,10 +317,6 @@ func (g *globalConfig) newHTTPClient() (*httpClient, io.Closer, error) {
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 	baseTransport.RegisterProtocol(althttp.GCSScheme, g.newGCSTransport(baseTransport))
-
-	if err := os.MkdirAll(filepath.Dir(g.HTTPCacheDB), 0o777); err != nil {
-		return nil, nil, err
-	}
 	cache := httpcache.Open(g.HTTPCacheDB, baseTransport, &httpcache.Options{
 		MaxResponseSize:         4 << 20, // 4 MiB
 		RequestCoalescingCutoff: 5 * time.Second,
@@ -320,22 +328,16 @@ func (g *globalConfig) newHTTPClient() (*httpClient, io.Closer, error) {
 			}
 		}),
 	})
-	client := &httpClient{
+	cleanup = func() {
+		if err := cache.Close(); err != nil {
+			log.Warnf(context.Background(), "%v", err)
+		}
+		baseTransport.CloseIdleConnections()
+	}
+	return &httpClient{
 		Transport: cache,
-	}
-	if g.NetrcPath == "" {
-		return client, cache, nil
-	}
-	netrcData, err := os.ReadFile(g.NetrcPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return client, cache, nil
-	}
-	if err != nil {
-		cache.Close()
-		return nil, nil, fmt.Errorf("open netrc file: %v", err)
-	}
-	client.Netrc = netrcData
-	return client, cache, nil
+		Netrc:     netrcData,
+	}, cleanup, nil
 }
 
 func (g *globalConfig) newGCSTransport(baseRoundTripper http.RoundTripper) http.RoundTripper {
@@ -387,49 +389,10 @@ func (t *fileSplitTransport) RoundTrip(req *http.Request) (*http.Response, error
 	return t.fallback.RoundTrip(req)
 }
 
-func (g *globalConfig) storeClient(ctx context.Context, opts *zbstorerpc.CodecOptions) *jsonrpc.Client {
-	return jsonrpc.NewClient(ctx, func(ctx context.Context) (jsonrpc.ClientCodec, error) {
-		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", g.StoreSocket)
-		if err != nil {
-			return nil, err
-		}
-		return zbstorerpc.NewCodec(conn, opts), nil
+func (g *globalConfig) openLocalStore(ctx context.Context) *zbstorerpc.Client {
+	return zbstorerpc.NewClient(ctx, func(ctx context.Context) (io.ReadWriteCloser, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", g.StoreSocket)
 	})
-}
-
-func (g *globalConfig) storeDeps() (_ *storeDeps, cleanup func()) {
-	var state struct {
-		client       *httpClient
-		clientCloser io.Closer
-	}
-
-	deps := &storeDeps{
-		httpClientProvider: func() (*httpClient, error) {
-			if state.client == nil {
-				var err error
-				state.client, state.clientCloser, err = g.newHTTPClient()
-				if err != nil {
-					return state.client, err
-				}
-			}
-			return state.client, nil
-		},
-	}
-	cleanup = func() {
-		if state.client != nil {
-			state.client.CloseIdleConnections()
-		}
-		if state.clientCloser != nil {
-			if err := state.clientCloser.Close(); err != nil {
-				log.Warnf(context.Background(), "%v", err)
-			}
-		}
-	}
-	return deps, cleanup
-}
-
-type storeDeps struct {
-	httpClientProvider func() (*httpClient, error)
 }
 
 type storeConfigType string
@@ -578,7 +541,7 @@ func (sc *storeConfig) UnmarshalText(text []byte) error {
 	return nil
 }
 
-func (sc *storeConfig) toStore(deps *storeDeps) (backend.Store, error) {
+func (sc *storeConfig) toStore(provideHTTPClient func() (zbstorehttp.Client, error)) (backend.Store, error) {
 	if sc == nil {
 		return zbstore.Null{}, nil
 	}
@@ -590,7 +553,7 @@ func (sc *storeConfig) toStore(deps *storeDeps) (backend.Store, error) {
 		if err := jsonv2.Unmarshal(sc.properties, &props); err != nil {
 			return nil, fmt.Errorf("unmarshal http store configuration: %v", err)
 		}
-		client, err := deps.httpClientProvider()
+		client, err := provideHTTPClient()
 		if err != nil {
 			return nil, err
 		}
@@ -651,4 +614,28 @@ type storeConfigHTTPProperties struct {
 // defaultVarDir returns "/opt/zb/var/zb" on Unix-like systems or `C:\zb\var\zb` on Windows systems.
 func defaultVarDir() string {
 	return filepath.Join(filepath.Dir(string(zbstore.DefaultDirectory())), "var", "zb")
+}
+
+// singletonProvider returns a function that calls f at most once
+// and a cleanup function that calls any cleanup function returned from f.
+func singletonProvider[T any](f func() (T, func(), error)) (provider func() (T, error), cleanup func()) {
+	var state struct {
+		init    sync.Once
+		x       T
+		cleanup func()
+		err     error
+	}
+	provider = func() (T, error) {
+		state.init.Do(func() {
+			state.x, state.cleanup, state.err = f()
+		})
+		return state.x, state.err
+	}
+	cleanup = func() {
+		state.init.Do(func() {})
+		if state.cleanup != nil {
+			state.cleanup()
+		}
+	}
+	return provider, cleanup
 }

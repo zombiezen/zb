@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 // Package zbstorerpc is the reference implementation of the [zb store RPC protocol].
+// [*Client] handles the sending end
+// and [Serve] handles the receiving end.
 //
 // [zb store RPC protocol]: https://github.com/256lights/zb/blob/main/internal/zbstorerpc/README.md
 package zbstorerpc
@@ -411,16 +413,8 @@ type FetchResponse struct {
 
 // ExportMethod is the name of the method that triggers an export of store objects.
 // [ExportRequest] is used for the request and the response is null.
+// Servers can use [ExportOutput] to obtain the destination to use for output.
 const ExportMethod = "zb.export"
-
-// ExportIDExtraFieldName is the name of the extra field in [jsonrpc.Request]
-// used to pass a value that will be passed through with [ExportIDHeaderName].
-const ExportIDExtraFieldName = "zbExportID"
-
-// ExportIDHeaderName is the name of the header used to correlate an [ExportRequest]
-// with an export message.
-// The request should have used [ExportIDExtraFieldName].
-const ExportIDHeaderName = "Zb-Export-Id"
 
 // ExportRequest is the set of parameters for [ExportMethod].
 type ExportRequest struct {

@@ -10,25 +10,20 @@ import (
 	"zb.256lights.llc/pkg/internal/backendtest"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/testcontext"
-	"zb.256lights.llc/pkg/internal/zbstorerpc"
 )
 
 func TestLazy(t *testing.T) {
 	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	di := new(zbstorerpc.DeferredImporter)
 	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
-		ClientOptions: zbstorerpc.CodecOptions{
-			Importer: di,
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          newTestRPCStore(store, di),
+		Store:          &testRPCStore{Client: store},
 		StoreDirectory: storeDir,
 	})
 	if err != nil {

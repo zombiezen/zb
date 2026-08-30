@@ -282,7 +282,7 @@ func readTestData(dir zbstore.Directory, name string, fileSubstitutions map[stri
 	}, nil
 }
 
-func (data *testDataArchive) writeTo(ctx context.Context, client *jsonrpc.Client, fallback zbstore.Importer) error {
+func (data *testDataArchive) writeTo(ctx context.Context, client, fallback zbstore.Importer) error {
 	exportBuffer := new(bytes.Buffer)
 	exporter := zbstore.NewExportWriter(exportBuffer)
 	for _, obj := range data.objects {
@@ -295,17 +295,7 @@ func (data *testDataArchive) writeTo(ctx context.Context, client *jsonrpc.Client
 	if err := exporter.Close(); err != nil {
 		return err
 	}
-	codec, releaseCodec, err := storeCodec(ctx, client)
-	if err != nil {
-		return err
-	}
-	err = codec.Export(nil, exportBuffer)
-	releaseCodec()
-	if err != nil {
-		return err
-	}
-	// Exports don't send a response, so this introduces a sync point.
-	if err := jsonrpc.Do(ctx, client, zbstorerpc.NopMethod, nil, nil); err != nil {
+	if err := client.StoreImport(ctx, exportBuffer); err != nil {
 		return err
 	}
 
@@ -372,7 +362,7 @@ type scriptTestOptions struct {
 
 // runScriptTest runs a backend script test from a testdata file.
 // See testdata/README.md for documentation.
-func runScriptTest(ctx context.Context, tb testing.TB, dir zbstore.Directory, client *jsonrpc.Client, data *testDataArchive, opts *scriptTestOptions) (env map[string]string) {
+func runScriptTest(ctx context.Context, tb testing.TB, dir zbstore.Directory, client *zbstorerpc.Client, data *testDataArchive, opts *scriptTestOptions) (env map[string]string) {
 	tb.Helper()
 
 	if opts == nil {
@@ -476,7 +466,7 @@ type storeCommands struct {
 	tb         testing.TB
 	directory  zbstore.Directory
 	server     *Server
-	client     *jsonrpc.Client
+	client     *zbstorerpc.Client
 	allObjects zbstore.Store
 	rewrites   map[string]zbstore.Path
 	fallback   *storetest.Store
@@ -1036,19 +1026,6 @@ func diffObjectInfo(ctx context.Context, want zbstore.Object, got *zbstorerpc.Ob
 	wantInfo := zbstorerpc.NewObjectInfo(want.Info())
 	wantInfo.NARHash = h.SumHash()
 	return cmp.Diff(wantInfo, got)
-}
-
-func storeCodec(ctx context.Context, client *jsonrpc.Client) (codec *zbstorerpc.Codec, release func(), err error) {
-	generic, release, err := client.Codec(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	codec, ok := generic.(*zbstorerpc.Codec)
-	if !ok {
-		release()
-		return nil, nil, fmt.Errorf("store connection is %T (want %T)", generic, (*zbstorerpc.Codec)(nil))
-	}
-	return codec, release, nil
 }
 
 func TestMain(m *testing.M) {

@@ -17,7 +17,6 @@ import (
 	"zb.256lights.llc/pkg/internal/storetest"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/testcontext"
-	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
 )
 
@@ -114,17 +113,13 @@ func TestURLs(t *testing.T) {
 			}
 			replacer := strings.NewReplacer(replacements...)
 
-			di := new(zbstorerpc.DeferredImporter)
 			_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 				TempDir: t.TempDir(),
-				ClientOptions: zbstorerpc.CodecOptions{
-					Importer: di,
-				},
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			evalStore := newTestRPCStore(store, di)
+			evalStore := &testRPCStore{Client: store}
 			if err := evalStore.StoreImport(ctx, exportBuffer); err != nil {
 				t.Fatal(err)
 			}

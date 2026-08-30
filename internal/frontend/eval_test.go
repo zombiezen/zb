@@ -104,18 +104,14 @@ func TestExpression(t *testing.T) {
 	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	di := new(zbstorerpc.DeferredImporter)
 	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
-		ClientOptions: zbstorerpc.CodecOptions{
-			Importer: di,
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          newTestRPCStore(store, di),
+		Store:          &testRPCStore{Client: store},
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -176,19 +172,15 @@ func TestGetenv(t *testing.T) {
 			storeDir := backendtest.NewStoreDirectory(t)
 
 			const wantKey = "BAR"
-			di := new(zbstorerpc.DeferredImporter)
 			_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 				TempDir: t.TempDir(),
-				ClientOptions: zbstorerpc.CodecOptions{
-					Importer: di,
-				},
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
 			callCount := 0
 			eval, err := NewEval(&Options{
-				Store:          newTestRPCStore(store, di),
+				Store:          &testRPCStore{Client: store},
 				StoreDirectory: storeDir,
 				LookupEnv: func(ctx context.Context, key string) (string, bool) {
 					callCount++
@@ -223,18 +215,14 @@ func TestStringMethod(t *testing.T) {
 	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	di := new(zbstorerpc.DeferredImporter)
 	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
-		ClientOptions: zbstorerpc.CodecOptions{
-			Importer: di,
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          newTestRPCStore(store, di),
+		Store:          &testRPCStore{Client: store},
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -261,18 +249,14 @@ func TestImportExitStore(t *testing.T) {
 	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	di := new(zbstorerpc.DeferredImporter)
 	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
-		ClientOptions: zbstorerpc.CodecOptions{
-			Importer: di,
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          newTestRPCStore(store, di),
+		Store:          &testRPCStore{Client: store},
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -320,17 +304,13 @@ func TestStorePath(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		di := new(zbstorerpc.DeferredImporter)
 		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 			TempDir: t.TempDir(),
-			ClientOptions: zbstorerpc.CodecOptions{
-				Importer: di,
-			},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		rpcStore := newTestRPCStore(store, di)
+		rpcStore := &testRPCStore{Client: store}
 		if err := rpcStore.StoreImport(ctx, exportBuffer); err != nil {
 			t.Fatal(err)
 		}
@@ -381,14 +361,10 @@ func TestStorePath(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		di := new(zbstorerpc.DeferredImporter)
 		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 			TempDir: t.TempDir(),
 			Options: backend.Options{
 				Fallback: fallback,
-			},
-			ClientOptions: zbstorerpc.CodecOptions{
-				Importer: di,
 			},
 		})
 		if err != nil {
@@ -396,7 +372,7 @@ func TestStorePath(t *testing.T) {
 		}
 
 		eval, err := NewEval(&Options{
-			Store:          newTestRPCStore(store, di),
+			Store:          &testRPCStore{Client: store},
 			StoreDirectory: storeDir,
 		})
 		if err != nil {
@@ -423,18 +399,14 @@ func TestExtract(t *testing.T) {
 	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	di := new(zbstorerpc.DeferredImporter)
 	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
-		ClientOptions: zbstorerpc.CodecOptions{
-			Importer: di,
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          newTestRPCStore(store, di),
+		Store:          &testRPCStore{Client: store},
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -544,18 +516,14 @@ func TestNewState(t *testing.T) {
 	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	di := new(zbstorerpc.DeferredImporter)
 	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
-		ClientOptions: zbstorerpc.CodecOptions{
-			Importer: di,
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          newTestRPCStore(store, di),
+		Store:          &testRPCStore{Client: store},
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -590,18 +558,14 @@ func BenchmarkNewState(b *testing.B) {
 	ctx := testcontext.New(b)
 	storeDir := backendtest.NewStoreDirectory(b)
 
-	di := new(zbstorerpc.DeferredImporter)
 	_, store, err := backendtest.NewServer(ctx, b, storeDir, &backendtest.Options{
 		TempDir: b.TempDir(),
-		ClientOptions: zbstorerpc.CodecOptions{
-			Importer: di,
-		},
 	})
 	if err != nil {
 		b.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          newTestRPCStore(store, di),
+		Store:          &testRPCStore{Client: store},
 		StoreDirectory: storeDir,
 	})
 	if err != nil {
@@ -629,18 +593,10 @@ func BenchmarkNewState(b *testing.B) {
 // Imported paths are tracked.
 // Realization logs are ignored.
 type testRPCStore struct {
-	zbstorerpc.Store
+	*zbstorerpc.Client
 
 	mu      sync.Mutex
 	imports []zbstore.Path
-}
-
-func newTestRPCStore(client *jsonrpc.Client, di *zbstorerpc.DeferredImporter) *testRPCStore {
-	store := &testRPCStore{
-		Store: zbstorerpc.Store{Handler: client},
-	}
-	di.SetImporter(store)
-	return store
 }
 
 func (store *testRPCStore) readImports() []zbstore.Path {
@@ -657,14 +613,14 @@ func (store *testRPCStore) StoreImport(ctx context.Context, r io.Reader) error {
 		defer pr.Close()
 		zbstore.ReceiveExport(exportSpy{store}, pr)
 	}()
-	err := store.Store.StoreImport(ctx, io.TeeReader(r, pw))
+	err := store.Client.StoreImport(ctx, io.TeeReader(r, pw))
 	<-done
 	return err
 }
 
 func (store *testRPCStore) FetchObjects(ctx context.Context, paths []zbstore.Path) (map[zbstore.Path]*zbstorerpc.ObjectInfo, error) {
 	var resp zbstorerpc.FetchResponse
-	err := jsonrpc.Do(ctx, store.Handler, zbstorerpc.FetchMethod, &resp, &zbstorerpc.FetchRequest{
+	err := jsonrpc.Do(ctx, store, zbstorerpc.FetchMethod, &resp, &zbstorerpc.FetchRequest{
 		Paths: paths,
 	})
 	if err != nil {
@@ -675,7 +631,7 @@ func (store *testRPCStore) FetchObjects(ctx context.Context, paths []zbstore.Pat
 
 func (store *testRPCStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstorerpc.BuildResult, error) {
 	var realizeResponse zbstorerpc.RealizeResponse
-	err := jsonrpc.Do(ctx, store.Handler, zbstorerpc.RealizeMethod, &realizeResponse, &zbstorerpc.RealizeRequest{
+	err := jsonrpc.Do(ctx, store, zbstorerpc.RealizeMethod, &realizeResponse, &zbstorerpc.RealizeRequest{
 		DrvPaths: slices.Collect(func(yield func(zbstore.Path) bool) {
 			for ref := range want.All() {
 				if !yield(ref.DrvPath) {
@@ -688,7 +644,7 @@ func (store *testRPCStore) Realize(ctx context.Context, want sets.Set[zbstore.Ou
 	if err != nil {
 		return nil, err
 	}
-	build, err := backendtest.WaitForSuccessfulBuild(ctx, store.Handler, realizeResponse.BuildID)
+	build, err := backendtest.WaitForSuccessfulBuild(ctx, store, realizeResponse.BuildID)
 	if err != nil {
 		return nil, err
 	}

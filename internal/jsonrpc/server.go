@@ -109,11 +109,7 @@ func (srv *server) single(ctx context.Context, handler Handler, req *serverReque
 	case cancelMethod:
 		resp, handlerError = srv.cancel(&req.Request)
 	default:
-		handlerCtx := ctx
-		if !notification {
-			handlerCtx = withRequestID(ctx, req.id)
-		}
-		resp, handlerError = handler.JSONRPC(handlerCtx, &req.Request)
+		resp, handlerError = handler.JSONRPC(ctx, &req.Request)
 	}
 	cancel()
 
@@ -387,17 +383,4 @@ func marshalErrorResponseJSONTo(enc *jsontext.Encoder, id RequestID, responseErr
 		return err
 	}
 	return nil
-}
-
-type requestIDContextKey struct{}
-
-func withRequestID(parent context.Context, id RequestID) context.Context {
-	return context.WithValue(parent, requestIDContextKey{}, id)
-}
-
-// RequestIDFromContext returns the request ID from the context.
-// This is only set on contexts that come from [Serve].
-func RequestIDFromContext(ctx context.Context) (id RequestID, ok bool) {
-	id, ok = ctx.Value(requestIDContextKey{}).(RequestID)
-	return
 }

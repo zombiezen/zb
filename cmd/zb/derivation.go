@@ -83,22 +83,14 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error 
 		}
 	}
 
-	httpClient, httpCloser, err := g.newHTTPClient()
+	httpClient, cleanup, err := g.newHTTPClient()
 	if err != nil {
 		return err
 	}
-	defer func() {
-		httpClient.CloseIdleConnections()
-		if err := httpCloser.Close(); err != nil {
-			log.Warnf(ctx, "%v", err)
-		}
-	}()
-	di := new(zbstorerpc.DeferredImporter)
-	storeClient := g.storeClient(ctx, &zbstorerpc.CodecOptions{
-		Importer: di,
-	})
+	defer cleanup()
+	storeClient := g.openLocalStore(ctx)
 	defer storeClient.Close()
-	eval, err := c.newEval(g, httpClient, storeClient, di)
+	eval, err := c.newEval(g, httpClient, storeClient)
 	if err != nil {
 		return err
 	}
@@ -311,22 +303,14 @@ func (c *derivationEnvCommand) Validate() error {
 }
 
 func (c *derivationEnvCommand) Run(ctx context.Context, g *globalConfig) error {
-	httpClient, httpCloser, err := g.newHTTPClient()
+	httpClient, cleanup, err := g.newHTTPClient()
 	if err != nil {
 		return err
 	}
-	defer func() {
-		httpClient.CloseIdleConnections()
-		if err := httpCloser.Close(); err != nil {
-			log.Warnf(ctx, "%v", err)
-		}
-	}()
-	di := new(zbstorerpc.DeferredImporter)
-	storeClient := g.storeClient(ctx, &zbstorerpc.CodecOptions{
-		Importer: di,
-	})
+	defer cleanup()
+	storeClient := g.openLocalStore(ctx)
 	defer storeClient.Close()
-	eval, err := c.newEval(g, httpClient, storeClient, di)
+	eval, err := c.newEval(g, httpClient, storeClient)
 	if err != nil {
 		return err
 	}

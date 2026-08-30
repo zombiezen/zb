@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/go-json-experiment/json/jsontext"
@@ -67,8 +66,8 @@ func (c *storeObjectInfoCommand) Signature() string {
 }
 
 func (c *storeObjectInfoCommand) Run(ctx context.Context, g *globalConfig) error {
-	storeClient := g.storeClient(ctx, nil)
-	defer storeClient.Close()
+	store := g.openLocalStore(ctx)
+	defer store.Close()
 
 	const errNotExist = "does not exist"
 
@@ -88,7 +87,7 @@ func (c *storeObjectInfoCommand) Run(ctx context.Context, g *globalConfig) error
 			var partialParsed struct {
 				Info jsontext.Value `json:"info"`
 			}
-			err = jsonrpc.Do(ctx, storeClient, zbstorerpc.InfoMethod, &partialParsed, req)
+			err = jsonrpc.Do(ctx, store, zbstorerpc.InfoMethod, &partialParsed, req)
 			if err != nil {
 				return fmt.Errorf("%s: %v", path, err)
 			}
@@ -106,7 +105,7 @@ func (c *storeObjectInfoCommand) Run(ctx context.Context, g *globalConfig) error
 		}
 
 		resp := new(zbstorerpc.InfoResponse)
-		err = jsonrpc.Do(ctx, storeClient, zbstorerpc.InfoMethod, resp, req)
+		err = jsonrpc.Do(ctx, store, zbstorerpc.InfoMethod, resp, req)
 		if err != nil {
 			return fmt.Errorf("%s: %v", path, err)
 		}
@@ -132,9 +131,9 @@ func (c *storeObjectInfoCommand) Run(ctx context.Context, g *globalConfig) error
 }
 
 type storeObjectExportCommand struct {
-	Paths             []string `kong:"arg,name=path"`
-	IncludeReferences bool     `kong:"name=references,negatable,help=Include referenced store objects (default ${default}),default=true"`
-	OutputPath        string   `kong:"name=output,short=o,placeholder=file,help=Output file"`
+	Paths             []zbstore.Path `kong:"arg,name=path"`
+	IncludeReferences bool           `kong:"name=references,negatable,help=Include referenced store objects (default ${default}),default=true"`
+	OutputPath        string         `kong:"name=output,short=o,placeholder=file,help=Output file"`
 }
 
 func (c *storeObjectExportCommand) Signature() string {
@@ -153,31 +152,15 @@ func (c *storeObjectExportCommand) Run(ctx context.Context, g *globalConfig) err
 	closer := xio.CloseOnce(output)
 	defer closer.Close()
 
-	toOutput := zbstorerpc.ImportFunc(func(header jsonrpc.Header, body io.Reader) error {
-		return zbstore.ReceiveExport(nopReceiver{}, io.TeeReader(body, output))
-	})
-	storeClient := g.storeClient(ctx, &zbstorerpc.CodecOptions{
-		Importer: toOutput,
-	})
-	defer storeClient.Close()
+	store := g.openLocalStore(ctx)
+	defer store.Close()
 
-	req := &zbstorerpc.ExportRequest{
-		Paths:             make([]zbstore.Path, len(c.Paths)),
+	err = store.StoreExport(ctx, output, sets.Collect(slices.Values(c.Paths)), &zbstore.ExportOptions{
 		ExcludeReferences: !c.IncludeReferences,
-	}
-	for i, p := range c.Paths {
-		var err error
-		req.Paths[i], err = zbstore.ParsePath(p)
-		if err != nil {
-			return err
-		}
-	}
-	if err := jsonrpc.Do(ctx, storeClient, zbstorerpc.ExportMethod, nil, req); err != nil {
+	})
+	if err != nil {
 		return err
 	}
-
-	// The export message is sent before the RPC response, so if we received the response,
-	// the export is complete.
 	if err := closer.Close(); err != nil {
 		return err
 	}
@@ -198,8 +181,8 @@ func (c *storeObjectImportCommand) Signature() string {
 }
 
 func (c *storeObjectImportCommand) Run(ctx context.Context, g *globalConfig) error {
-	storeClient := g.storeClient(ctx, nil)
-	defer storeClient.Close()
+	store := g.openLocalStore(ctx)
+	defer store.Close()
 
 	inputPaths := c.Paths
 	if len(inputPaths) == 0 {
@@ -209,14 +192,14 @@ func (c *storeObjectImportCommand) Run(ctx context.Context, g *globalConfig) err
 		log.Infof(ctx, "Waiting for data on stdin...")
 	}
 
-	storePaths, err := catExports(ctx, storeClient, inputPaths)
+	storePaths, err := catExports(ctx, store, inputPaths)
 	if err != nil {
 		return err
 	}
 	ok := true
 	for _, path := range storePaths {
 		var exists bool
-		err := jsonrpc.Do(ctx, storeClient, zbstorerpc.ExistsMethod, &exists, &zbstorerpc.ExistsRequest{
+		err := jsonrpc.Do(ctx, store, zbstorerpc.ExistsMethod, &exists, &zbstorerpc.ExistsRequest{
 			Path: string(path),
 		})
 		if err != nil {
@@ -234,8 +217,8 @@ func (c *storeObjectImportCommand) Run(ctx context.Context, g *globalConfig) err
 }
 
 // catExports concatenates the exports from the given files into a single export
-// and sends it to the store connected via the given client.
-func catExports(ctx context.Context, client *jsonrpc.Client, exportFiles []string) ([]zbstore.Path, error) {
+// and sends it to the store connected via the [zbstore.Importer].
+func catExports(ctx context.Context, store zbstore.Importer, exportFiles []string) ([]zbstore.Path, error) {
 	// If there are no files, then no-op.
 	if len(exportFiles) == 0 {
 		return nil, nil
@@ -248,12 +231,6 @@ func catExports(ctx context.Context, client *jsonrpc.Client, exportFiles []strin
 			return nil, err
 		}
 		defer f.Close()
-		size := int64(-1)
-		if info, err := f.Stat(); err != nil {
-			log.Warnf(ctx, "Unable to get size of %s: %v", inputFileName(exportFiles[0]), err)
-		} else if info.Mode().IsRegular() {
-			size = info.Size()
-		}
 
 		// We still need to parse the export to determine store paths to confirm.
 		// If this fails, don't fail the overall operation.
@@ -270,7 +247,7 @@ func catExports(ctx context.Context, client *jsonrpc.Client, exportFiles []strin
 			ch <- rec.paths
 		}()
 
-		err = importToStore(ctx, client, io.TeeReader(f, pw), size)
+		err = store.StoreImport(ctx, io.TeeReader(f, pw))
 		pw.Close()
 		paths := <-ch
 		return paths, err
@@ -280,7 +257,7 @@ func catExports(ctx context.Context, client *jsonrpc.Client, exportFiles []strin
 	pr, pw := io.Pipe()
 	ch := make(chan error)
 	go func() {
-		err := importToStore(ctx, client, pr, -1)
+		err := store.StoreImport(ctx, pr)
 		pr.CloseWithError(err)
 		ch <- err
 		close(ch)
@@ -354,28 +331,6 @@ func (pr *passthroughReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
 	}
 }
 
-// importToStore sends the content of r to client as an application/zb-store-export message.
-// If size is non-negative, then it is used as the message's Content-Length header.
-func importToStore(ctx context.Context, client *jsonrpc.Client, r io.Reader, size int64) error {
-	generic, releaseConn, err := client.Codec(ctx)
-	if err != nil {
-		return err
-	}
-	defer releaseConn()
-	codec, ok := generic.(*zbstorerpc.Codec)
-	if !ok {
-		return fmt.Errorf("store connection is %T (want %T)", generic, (*zbstorerpc.Codec)(nil))
-	}
-
-	var header jsonrpc.Header
-	if size >= 0 {
-		header = make(jsonrpc.Header)
-		header.Set("Content-Length", strconv.FormatInt(size, 10))
-		r = io.LimitReader(r, size)
-	}
-	return codec.Export(header, r)
-}
-
 // exportPathRecorder is a [zbstore.NARReceiver] that records the store paths encountered.
 // It optionally passes through its methods to wrapped.
 type exportPathRecorder struct {
@@ -426,43 +381,41 @@ func (c *storeObjectCopyCommand) Run(ctx context.Context, g *globalConfig) error
 	base.Path = strings.TrimRight(base.Path, "/") + "/"
 	sourceConfig := c.Source.resolve(base)
 	destinationConfig := c.Destination.resolve(base)
-	storeDeps, cleanup := g.storeDeps()
-	defer cleanup()
 	paths := sets.Collect(slices.Values(c.Paths))
+	provideHTTPClient, cleanup := singletonProvider(g.newHTTPClient)
+	defer cleanup()
 
 	switch {
 	case sourceConfig.isNull() && !destinationConfig.isNull():
-		di := new(zbstorerpc.DeferredImporter)
-		localStoreClient := g.storeClient(ctx, &zbstorerpc.CodecOptions{
-			Importer: di,
+		localStore := g.openLocalStore(ctx)
+		defer localStore.Close()
+		destinationStore, err := destinationConfig.toStore(func() (zbstorehttp.Client, error) {
+			return provideHTTPClient()
 		})
-		defer localStoreClient.Close()
-		localStore := &zbstorerpc.Store{Handler: localStoreClient}
-		di.SetImporter(localStore)
-		destinationStore, err := destinationConfig.toStore(storeDeps)
 		if err != nil {
 			return err
 		}
 		return storeCopy(ctx, destinationStore, localStore, paths)
 	case !sourceConfig.isNull() && destinationConfig.isNull():
-		di := new(zbstorerpc.DeferredImporter)
-		localStoreClient := g.storeClient(ctx, &zbstorerpc.CodecOptions{
-			Importer: di,
+		localStore := g.openLocalStore(ctx)
+		defer localStore.Close()
+		sourceStore, err := sourceConfig.toStore(func() (zbstorehttp.Client, error) {
+			return provideHTTPClient()
 		})
-		defer localStoreClient.Close()
-		localStore := &zbstorerpc.Store{Handler: localStoreClient}
-		di.SetImporter(localStore)
-		sourceStore, err := sourceConfig.toStore(storeDeps)
 		if err != nil {
 			return err
 		}
 		return storeCopy(ctx, localStore, sourceStore, paths)
 	case !sourceConfig.isNull() && !destinationConfig.isNull():
-		sourceStore, err := sourceConfig.toStore(storeDeps)
+		sourceStore, err := sourceConfig.toStore(func() (zbstorehttp.Client, error) {
+			return provideHTTPClient()
+		})
 		if err != nil {
 			return err
 		}
-		destinationStore, err := destinationConfig.toStore(storeDeps)
+		destinationStore, err := destinationConfig.toStore(func() (zbstorehttp.Client, error) {
+			return provideHTTPClient()
+		})
 		if err != nil {
 			return err
 		}

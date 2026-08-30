@@ -218,18 +218,14 @@ func (opts *evalOptions) Validate() error {
 	return nil
 }
 
-func (opts *evalOptions) newEval(g *globalConfig, httpClient frontend.HTTPClient, storeClient *jsonrpc.Client, di *zbstorerpc.DeferredImporter) (*frontend.Eval, error) {
-	store := &rpcStore{
-		dir:        g.Directory,
-		keepFailed: opts.KeepFailed,
-		Store: zbstorerpc.Store{
-			Handler: storeClient,
-		},
-		reuse: opts.reusePolicy(g),
-	}
-	di.SetImporter(store)
+func (opts *evalOptions) newEval(g *globalConfig, httpClient frontend.HTTPClient, localStore *zbstorerpc.Client) (*frontend.Eval, error) {
 	return frontend.NewEval(&frontend.Options{
-		Store:          store,
+		Store: &rpcStore{
+			dir:        g.Directory,
+			keepFailed: opts.KeepFailed,
+			Client:     localStore,
+			reuse:      opts.reusePolicy(g),
+		},
 		StoreDirectory: g.Directory,
 		CacheDBPath:    g.CacheDB,
 		HTTPClient:     httpClient,
@@ -262,22 +258,14 @@ func (c *evalCommand) Signature() string {
 }
 
 func (c *evalCommand) Run(ctx context.Context, g *globalConfig) error {
-	httpClient, httpCloser, err := g.newHTTPClient()
+	httpClient, cleanup, err := g.newHTTPClient()
 	if err != nil {
 		return err
 	}
-	defer func() {
-		httpClient.CloseIdleConnections()
-		if err := httpCloser.Close(); err != nil {
-			log.Warnf(ctx, "%v", err)
-		}
-	}()
-	di := new(zbstorerpc.DeferredImporter)
-	storeClient := g.storeClient(ctx, &zbstorerpc.CodecOptions{
-		Importer: di,
-	})
+	defer cleanup()
+	storeClient := g.openLocalStore(ctx)
 	defer storeClient.Close()
-	eval, err := c.newEval(g, httpClient, storeClient, di)
+	eval, err := c.newEval(g, httpClient, storeClient)
 	if err != nil {
 		return err
 	}
@@ -314,22 +302,14 @@ func (c *buildCommand) Signature() string {
 }
 
 func (c *buildCommand) Run(ctx context.Context, g *globalConfig) error {
-	httpClient, httpCloser, err := g.newHTTPClient()
+	httpClient, cleanup, err := g.newHTTPClient()
 	if err != nil {
 		return err
 	}
-	defer func() {
-		httpClient.CloseIdleConnections()
-		if err := httpCloser.Close(); err != nil {
-			log.Warnf(ctx, "%v", err)
-		}
-	}()
-	di := new(zbstorerpc.DeferredImporter)
-	storeClient := g.storeClient(ctx, &zbstorerpc.CodecOptions{
-		Importer: di,
-	})
+	defer cleanup()
+	storeClient := g.openLocalStore(ctx)
 	defer storeClient.Close()
-	eval, err := c.newEval(g, httpClient, storeClient, di)
+	eval, err := c.newEval(g, httpClient, storeClient)
 	if err != nil {
 		return err
 	}
@@ -473,7 +453,7 @@ func forceSymlink(oldname, newname string) error {
 // It copies builder logs to stderr
 // and propagates options from [evalOptions].
 type rpcStore struct {
-	zbstorerpc.Store
+	*zbstorerpc.Client
 	dir        zbstore.Directory
 	keepFailed bool
 	reuse      *zbstorerpc.ReusePolicy
@@ -481,7 +461,7 @@ type rpcStore struct {
 
 func (store *rpcStore) FetchObjects(ctx context.Context, paths []zbstore.Path) (map[zbstore.Path]*zbstorerpc.ObjectInfo, error) {
 	var resp zbstorerpc.FetchResponse
-	err := jsonrpc.Do(ctx, store.Handler, zbstorerpc.FetchMethod, &resp, &zbstorerpc.FetchRequest{
+	err := jsonrpc.Do(ctx, store, zbstorerpc.FetchMethod, &resp, &zbstorerpc.FetchRequest{
 		Paths: paths,
 	})
 	if err != nil {
@@ -492,7 +472,7 @@ func (store *rpcStore) FetchObjects(ctx context.Context, paths []zbstore.Path) (
 
 func (store *rpcStore) Realize(ctx context.Context, want sets.Set[zbstore.OutputReference]) ([]*zbstorerpc.BuildResult, error) {
 	var realizeResponse zbstorerpc.RealizeResponse
-	err := jsonrpc.Do(ctx, store.Handler, zbstorerpc.RealizeMethod, &realizeResponse, &zbstorerpc.RealizeRequest{
+	err := jsonrpc.Do(ctx, store, zbstorerpc.RealizeMethod, &realizeResponse, &zbstorerpc.RealizeRequest{
 		DrvPaths: slices.Collect(func(yield func(zbstore.Path) bool) {
 			for ref := range want.All() {
 				if !yield(ref.DrvPath) {
@@ -506,7 +486,7 @@ func (store *rpcStore) Realize(ctx context.Context, want sets.Set[zbstore.Output
 	if err != nil {
 		return nil, err
 	}
-	build, _, err := waitForBuild(ctx, store.Handler, realizeResponse.BuildID)
+	build, _, err := waitForBuild(ctx, store, realizeResponse.BuildID)
 	if err != nil {
 		return nil, err
 	}

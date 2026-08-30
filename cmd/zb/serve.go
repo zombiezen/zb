@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -26,7 +25,6 @@ import (
 	"golang.org/x/sync/errgroup"
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/backend"
-	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/osutil"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/ui"
@@ -98,13 +96,18 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig, drain drainSign
 	}
 	// TODO(someday): Properly set permissions on the created database.
 
-	configStoreDeps, cleanupStoreDeps := g.storeDeps()
-	defer cleanupStoreDeps()
-	fallbackStore, err := g.Server.Download.toStore(configStoreDeps)
+	provideHTTPClient, cleanup := singletonProvider(g.newHTTPClient)
+	defer cleanup()
+
+	fallbackStore, err := g.Server.Download.toStore(func() (zbstorehttp.Client, error) {
+		return provideHTTPClient()
+	})
 	if err != nil {
 		return err
 	}
-	uploadStore, err := g.Server.Upload.toStore(configStoreDeps)
+	uploadStore, err := g.Server.Upload.toStore(func() (zbstorehttp.Client, error) {
+		return provideHTTPClient()
+	})
 	if err != nil {
 		return err
 	}
@@ -270,29 +273,12 @@ func (c *serveCommand) listenRPC(ctx context.Context, server *backend.Server, g 
 		}()
 	}
 
-	openConns := make(sets.Set[net.Conn])
-	var openConnsMu sync.Mutex
 	ctx, cancel := context.WithCancel(ctx)
 	var grp sync.WaitGroup
 	defer func() {
 		cancel()
 		grp.Wait()
 	}()
-	grp.Add(1)
-	context.AfterFunc(ctx, func() {
-		// Once the context is Done, refuse new connections and RPCs.
-		defer grp.Done()
-		if err := l.Close(); err != nil {
-			log.Errorf(ctx, "Closing Unix socket: %v", err)
-		}
-		openConnsMu.Lock()
-		for conn := range openConns.All() {
-			if err := closeRead(conn); err != nil {
-				log.Errorf(ctx, "Closing Unix socket: %v", err)
-			}
-		}
-		openConnsMu.Unlock()
-	})
 	log.Infof(ctx, "Listening on %s", g.StoreSocket)
 
 	for {
@@ -300,9 +286,6 @@ func (c *serveCommand) listenRPC(ctx context.Context, server *backend.Server, g 
 		if err != nil {
 			return err
 		}
-		openConnsMu.Lock()
-		openConns.Add(conn)
-		openConnsMu.Unlock()
 
 		grp.Go(func() {
 			recv := server.NewNARReceiver(ctx, bytebuffer.TempFileCreator{
@@ -310,21 +293,15 @@ func (c *serveCommand) listenRPC(ctx context.Context, server *backend.Server, g 
 			})
 			defer recv.Cleanup(ctx)
 
-			codec := zbstorerpc.NewCodec(nopCloser{conn}, &zbstorerpc.CodecOptions{
-				Importer: zbstorerpc.NewReceiverImporter(recv),
-			})
-			err := jsonrpc.Serve(backend.WithExporter(ctx, codec), codec, server)
+			var serverImporter struct {
+				*backend.Server
+				zbstorerpc.Importer
+			}
+			serverImporter.Server = server
+			serverImporter.Importer = zbstorerpc.NewReceiverImporter(recv)
+			err := zbstorerpc.Serve(ctx, conn, serverImporter)
 			if err != nil {
 				log.Debugf(ctx, "Disconnecting from %v: %v", conn.RemoteAddr(), err)
-			}
-			codec.Close()
-
-			openConnsMu.Lock()
-			openConns.Delete(conn)
-			openConnsMu.Unlock()
-
-			if err := conn.Close(); err != nil {
-				log.Errorf(ctx, "%v", err)
 			}
 		})
 	}
@@ -482,20 +459,4 @@ func listenUnix(path string) (*net.UnixListener, error) {
 	}
 
 	return l, nil
-}
-
-func closeRead(c net.Conn) error {
-	cr, ok := c.(interface{ CloseRead() error })
-	if !ok {
-		return fmt.Errorf("%T does not support uni-directional close", c)
-	}
-	return cr.CloseRead()
-}
-
-type nopCloser struct {
-	io.ReadWriter
-}
-
-func (nopCloser) Close() error {
-	return nil
 }

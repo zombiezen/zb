@@ -562,7 +562,9 @@ func (resp rawResponse) toResponse() (*Response, error) {
 		}
 		err := jsonv2.Unmarshal(errorField, &errorObject)
 		if err != nil {
-			err = fmt.Errorf("failed to unmarshal jsonrpc error: %v", err)
+			// If we can't unmarshal, use the JSON directly.
+			// Better than nothing for debugging.
+			err = errors.New(errorField.String())
 		} else if errorObject.Message != "" {
 			err = Error(errorObject.Code, errors.New(errorObject.Message))
 		} else {

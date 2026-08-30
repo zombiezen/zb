@@ -17,7 +17,6 @@ import (
 	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/testcontext"
-	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
 )
 
@@ -31,17 +30,13 @@ func TestPath(t *testing.T) {
 		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
-		di := new(zbstorerpc.DeferredImporter)
 		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 			TempDir: t.TempDir(),
-			ClientOptions: zbstorerpc.CodecOptions{
-				Importer: di,
-			},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		testStore := newTestRPCStore(store, di)
+		testStore := &testRPCStore{Client: store}
 		eval, err := NewEval(&Options{
 			Store:          testStore,
 			StoreDirectory: storeDir,
@@ -95,17 +90,13 @@ func TestPath(t *testing.T) {
 		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
-		di := new(zbstorerpc.DeferredImporter)
 		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 			TempDir: t.TempDir(),
-			ClientOptions: zbstorerpc.CodecOptions{
-				Importer: di,
-			},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		testStore := newTestRPCStore(store, di)
+		testStore := &testRPCStore{Client: store}
 		eval, err := NewEval(&Options{
 			Store:          testStore,
 			StoreDirectory: storeDir,
@@ -170,17 +161,13 @@ func TestPath(t *testing.T) {
 		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
-		di := new(zbstorerpc.DeferredImporter)
 		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 			TempDir: t.TempDir(),
-			ClientOptions: zbstorerpc.CodecOptions{
-				Importer: di,
-			},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		testStore := newTestRPCStore(store, di)
+		testStore := &testRPCStore{Client: store}
 		eval, err := NewEval(&Options{
 			Store:          testStore,
 			StoreDirectory: storeDir,
@@ -224,18 +211,14 @@ func TestPath(t *testing.T) {
 		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
-		di := new(zbstorerpc.DeferredImporter)
 		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 			TempDir: t.TempDir(),
-			ClientOptions: zbstorerpc.CodecOptions{
-				Importer: di,
-			},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		eval, err := NewEval(&Options{
-			Store:          newTestRPCStore(store, di),
+			Store:          &testRPCStore{Client: store},
 			StoreDirectory: storeDir,
 		})
 		if err != nil {
@@ -290,18 +273,14 @@ func TestPath(t *testing.T) {
 		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
-		di := new(zbstorerpc.DeferredImporter)
 		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 			TempDir: t.TempDir(),
-			ClientOptions: zbstorerpc.CodecOptions{
-				Importer: di,
-			},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		eval, err := NewEval(&Options{
-			Store:          newTestRPCStore(store, di),
+			Store:          &testRPCStore{Client: store},
 			StoreDirectory: storeDir,
 		})
 		if err != nil {
@@ -348,18 +327,14 @@ func TestPath(t *testing.T) {
 		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
-		di := new(zbstorerpc.DeferredImporter)
 		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 			TempDir: t.TempDir(),
-			ClientOptions: zbstorerpc.CodecOptions{
-				Importer: di,
-			},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		eval, err := NewEval(&Options{
-			Store:          newTestRPCStore(store, di),
+			Store:          &testRPCStore{Client: store},
 			StoreDirectory: storeDir,
 		})
 		if err != nil {
@@ -395,18 +370,14 @@ func TestPath(t *testing.T) {
 		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
-		di := new(zbstorerpc.DeferredImporter)
 		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 			TempDir: t.TempDir(),
-			ClientOptions: zbstorerpc.CodecOptions{
-				Importer: di,
-			},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		eval, err := NewEval(&Options{
-			Store:          newTestRPCStore(store, di),
+			Store:          &testRPCStore{Client: store},
 			StoreDirectory: storeDir,
 		})
 		if err != nil {
@@ -449,17 +420,13 @@ func TestReadFile(t *testing.T) {
 	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	di := new(zbstorerpc.DeferredImporter)
 	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
-		ClientOptions: zbstorerpc.CodecOptions{
-			Importer: di,
-		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	testStore := newTestRPCStore(store, di)
+	testStore := &testRPCStore{Client: store}
 	eval, err := NewEval(&Options{
 		Store:          testStore,
 		StoreDirectory: storeDir,

@@ -8,19 +8,18 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
-	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
 )
@@ -57,15 +56,13 @@ type Options struct {
 	// and the store database.
 	// If empty, then a new directory is created and registered for cleanup.
 	TempDir string
-
-	ClientOptions zbstorerpc.CodecOptions
 }
 
 // NewServer creates a new [backend.Server] suitable for testing
 // and returns a client connected to it.
 // The server and the client will be closed as part of test cleanup.
 // If opts is nil, it is treated the same as if it was passed new(Options).
-func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Options) (*backend.Server, *jsonrpc.Client, error) {
+func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Options) (*backend.Server, *zbstorerpc.Client, error) {
 	if opts == nil {
 		opts = new(Options)
 	}
@@ -108,46 +105,33 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 		realStoreDir = string(storeDir)
 	}
 	srv := backend.NewServer(storeDir, filepath.Join(tempDir, "db.sqlite"), opts2)
-	serverConn, clientConn := net.Pipe()
 
-	serveCtx, stopServe := context.WithCancel(context.WithoutCancel(ctx))
-	serverReceiver := srv.NewNARReceiver(serveCtx, bytebuffer.BufferCreator{})
-	serverCodec := zbstorerpc.NewCodec(serverConn, &zbstorerpc.CodecOptions{
-		Importer: zbstorerpc.NewReceiverImporter(serverReceiver),
-	})
-	serverCodecCloser := xio.CloseOnce(serverCodec)
-	stopServerCodecClose := context.AfterFunc(serveCtx, func() {
-		serverCodecCloser.Close()
-	})
-	wg.Go(func() {
-		jsonrpc.Serve(backend.WithExporter(serveCtx, serverCodec), serverCodec, srv)
-		stopServerCodecClose()
-		serverCodecCloser.Close()
-	})
+	clientCtx, stopClient := context.WithCancel(context.WithoutCancel(ctx))
+	client := zbstorerpc.NewClient(clientCtx, func(ctx context.Context) (io.ReadWriteCloser, error) {
+		serverConn, clientConn := net.Pipe()
+		wg.Go(func() {
+			serverReceiver := srv.NewNARReceiver(ctx, bytebuffer.BufferCreator{})
+			defer serverReceiver.Cleanup(context.WithoutCancel(ctx))
 
-	clientCodec := zbstorerpc.NewCodec(clientConn, &opts.ClientOptions)
-	var usedClientCodec atomic.Bool
-	client := jsonrpc.NewClient(ctx, func(ctx context.Context) (jsonrpc.ClientCodec, error) {
-		usedClientCodec.Store(true)
-		return clientCodec, nil
+			var serverImporter struct {
+				*backend.Server
+				zbstorerpc.Importer
+			}
+			serverImporter.Server = srv
+			serverImporter.Importer = zbstorerpc.NewReceiverImporter(serverReceiver)
+			zbstorerpc.Serve(ctx, serverConn, serverImporter)
+		})
+		return clientConn, nil
 	})
 
 	tb.Cleanup(func() {
+		stopClient()
 		if err := client.Close(); err != nil {
 			tb.Logf("client.Close: %v", err)
 			tb.Fail()
 		}
-		if !usedClientCodec.Load() {
-			if err := clientCodec.Close(); err != nil {
-				tb.Logf("client.Close: %v", err)
-				tb.Fail()
-			}
-		}
-
-		stopServe()
 		wg.Wait()
 
-		serverReceiver.Cleanup(context.WithoutCancel(ctx))
 		if err := srv.Close(); err != nil {
 			tb.Logf("srv.Close: %v", err)
 			tb.Fail()
@@ -212,7 +196,7 @@ func WaitForSuccessfulBuild(ctx context.Context, client jsonrpc.Handler, buildID
 }
 
 // ReadLog reads the entire log for the given build and derivation path into memory.
-func ReadLog(ctx context.Context, client *jsonrpc.Client, buildID string, drvPath zbstore.Path) ([]byte, error) {
+func ReadLog(ctx context.Context, client jsonrpc.Handler, buildID string, drvPath zbstore.Path) ([]byte, error) {
 	buf := new(bytes.Buffer)
 	for {
 		resp := new(zbstorerpc.ReadLogResponse)
