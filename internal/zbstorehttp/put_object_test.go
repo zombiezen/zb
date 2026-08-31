@@ -6,6 +6,7 @@ package zbstorehttp
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unsafe"
@@ -159,21 +161,21 @@ func TestStorePutObject(t *testing.T) {
 		}
 	})
 
-	t.Run("ClientError", func(t *testing.T) {
+	t.Run("Errors", func(t *testing.T) {
 		tests := []struct {
-			code               int
-			wantPermanentError bool
+			code      int
+			wantRetry bool
 		}{
-			{http.StatusUnauthorized, true},
-			{http.StatusForbidden, true},
-			{http.StatusPreconditionFailed, false},
-			{http.StatusTooManyRequests, false},
+			{http.StatusUnauthorized, false},
+			{http.StatusForbidden, false},
+			{http.StatusPreconditionFailed, true},
+			{http.StatusTooManyRequests, true},
 		}
 
 		for _, test := range tests {
 			name := strings.ReplaceAll(http.StatusText(test.code), " ", "")
 			t.Run(name, func(t *testing.T) {
-				ctx := testcontext.New(t)
+				ctx, cancel := context.WithCancel(testcontext.New(t))
 
 				narData, err := os.ReadFile(testdataPath(t, "../hello.txt.nar"))
 				if err != nil {
@@ -193,11 +195,16 @@ func TestStorePutObject(t *testing.T) {
 				}
 
 				mux := http.NewServeMux()
+				var tryCount atomic.Int32
 				mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 					if r.Method == http.MethodGet || r.Method == http.MethodHead {
 						http.NotFound(w, r)
 					} else {
+						n := tryCount.Add(1)
 						http.Error(w, http.StatusText(test.code), test.code)
+						if n > 1 {
+							cancel()
+						}
 					}
 				})
 				mux.HandleFunc("/discovery.json", func(w http.ResponseWriter, r *http.Request) {
@@ -229,10 +236,12 @@ func TestStorePutObject(t *testing.T) {
 					t.Log("store.PutObject:", err)
 				}
 
-				if got := IsPermanentError(err); got && !test.wantPermanentError {
-					t.Error("Error is permanent")
-				} else if !got && test.wantPermanentError {
-					t.Error("Error is not permanent")
+				wantTryCount := int32(1)
+				if test.wantRetry {
+					wantTryCount = 2
+				}
+				if got := tryCount.Load(); got != wantTryCount {
+					t.Errorf("received %d request(s); want %d", got, wantTryCount)
 				}
 			})
 		}

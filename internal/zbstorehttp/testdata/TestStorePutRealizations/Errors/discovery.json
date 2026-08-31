@@ -1,0 +1,11 @@
+{
+  "_links": {
+    "https://zb-build.dev/api/rel/realization": [
+      {
+        "href": "realizations/{hashDigest}.json",
+        "templated": true,
+        "type": "application/json; charset=utf-8"
+      }
+    ]
+  }
+}

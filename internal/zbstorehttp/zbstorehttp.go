@@ -15,6 +15,7 @@ import (
 	"iter"
 	"net/http"
 	"net/url"
+	"time"
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"zb.256lights.llc/pkg/bytebuffer"
@@ -23,6 +24,7 @@ import (
 	"zb.256lights.llc/pkg/internal/httpencoding"
 	"zb.256lights.llc/pkg/internal/multierror"
 	"zb.256lights.llc/pkg/internal/xhttp"
+	"zb.256lights.llc/pkg/internal/xtime"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
@@ -69,7 +71,7 @@ func (s *Store) client() Client {
 
 func (s *Store) discover(ctx context.Context) (*hal.Resource, error) {
 	if s.URL == nil {
-		return nil, permanentError{fmt.Errorf("get discovery document: url missing")}
+		return nil, fmt.Errorf("get discovery document: url missing")
 	}
 
 	res, err := fetch(ctx, s.client(), &fetchRequest{
@@ -77,55 +79,55 @@ func (s *Store) discover(ctx context.Context) (*hal.Resource, error) {
 		accept: "application/hal+json,application/json;q=0.9,text/*;q=0.8,*/*;q=0.7",
 	})
 	if err != nil {
-		code, _ := xhttp.ErrorStatusCode(err)
-		err := fmt.Errorf("get discovery document: %v", err)
-		if code == http.StatusGone {
-			// Gone indicates that retries to obtain this resource will continue to fail.
-			err = permanentError{err}
+		if isClientError(err) {
+			return nil, fmt.Errorf("get discovery document: %v", err)
+		} else {
+			return nil, temporaryError{fmt.Errorf("get discovery document: %v", err)}
 		}
-		return nil, err
 	}
 	hr := new(hal.Resource)
 	if err := jsonv2.Unmarshal(res.body, hr); err != nil {
-		return nil, permanentError{fmt.Errorf("get discovery document: %v", err)}
+		return nil, fmt.Errorf("get discovery document: %v", &url.Error{
+			Op:  "parse",
+			URL: s.URL.Redacted(),
+			Err: err,
+		})
 	}
 	return hr, nil
 }
 
 // Object fetches the .narinfo resource for the store object at the given path.
 func (s *Store) Object(ctx context.Context, path zbstore.Path) (zbstore.Object, error) {
-	hr, err := s.discover(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("stat %s: %w", path, err)
-	}
-	var ec multierror.Collector
-	for u := range s.narInfoURLs(&ec, hr, path) {
-		info, _, err := s.fetchNARInfo(ctx, u)
+	var object zbstore.Object
+	err := retry(ctx, "stat "+string(path), func() error {
+		hr, err := s.discover(ctx)
+		if err != nil {
+			return err
+		}
+		var ec multierror.Collector
+		for u := range s.narInfoURLs(&ec, hr, path) {
+			info, _, err := s.fetchNARInfo(ctx, u)
+			if err == nil {
+				object = &httpObject{
+					base:   u,
+					client: s.client(),
+					info:   info,
+				}
+				return nil
+			}
+			if isNotFound(err) {
+				log.Debugf(ctx, "NAR info not found: %v", err)
+			} else {
+				ec.Add(err)
+			}
+		}
+		err = ec.Error()
 		if err == nil {
-			return &httpObject{
-				base:   u,
-				client: s.client(),
-				info:   info,
-			}, nil
+			err = zbstore.ErrNotFound
 		}
-		if isNotFound(err) {
-			log.Debugf(ctx, "NAR info not found: %v", err)
-		} else {
-			ec.Add(err)
-		}
-	}
-
-	err = ec.Error()
-	if err == nil {
-		err = fmt.Errorf("stat %s: %w", path, zbstore.ErrNotFound)
-	} else {
-		var ec2 multierror.Collector
-		for err := range multierror.All(err) {
-			ec2.Add(fmt.Errorf("stat %s: %w", path, err))
-		}
-		err = ec2.Error()
-	}
-	return nil, err
+		return err
+	})
+	return object, err
 }
 
 func (s *Store) narInfoURLs(ec *multierror.Collector, discoveryDocument *hal.Resource, path zbstore.Path) iter.Seq[*url.URL] {
@@ -146,6 +148,9 @@ func (s *Store) fetchNARInfo(ctx context.Context, u *url.URL) (info *NARInfo, rn
 	})
 	rneg = requestNegotiationFromFetchResponse(res, err)
 	if err != nil {
+		if !isClientError(err) {
+			err = temporaryError{err}
+		}
 		return nil, rneg, err
 	}
 	result := new(NARInfo)
@@ -164,29 +169,31 @@ func (s *Store) fetchNARInfo(ctx context.Context, u *url.URL) (info *NARInfo, rn
 //
 // [derivation hash]: https://zb.256lights.llc/binary-cache/realizations#derivation-hashes
 func (s *Store) FetchRealizations(ctx context.Context, drvHash nix.Hash) (zbstore.RealizationMap, error) {
+	var hr *hal.Resource
+	op := "fetch realizations for " + drvHash.String()
+	err := retry(ctx, op, func() error {
+		var err error
+		hr, err = s.discover(ctx)
+		return err
+	})
 	result := zbstore.RealizationMap{DerivationHash: drvHash}
-	hr, err := s.discover(ctx)
 	if err != nil {
-		return result, fmt.Errorf("fetch realizations for %v: %w", drvHash, err)
+		return result, err
 	}
 
 	var ec multierror.Collector
 	for u := range s.realizationURLs(&ec, hr, drvHash) {
-		if err := s.addRealizations(ctx, &result, u); err != nil {
+		err := retry(ctx, op, func() error {
+			return s.mergeRealizations(ctx, &result, u)
+		})
+		if err != nil {
 			ec.Add(err)
-			continue
 		}
-	}
-
-	err = ec.Error()
-	ec = multierror.Collector{}
-	for err := range multierror.All(err) {
-		ec.Add(fmt.Errorf("fetch realizations for %v: %v", drvHash, err))
 	}
 	return result, ec.Error()
 }
 
-func (s *Store) addRealizations(ctx context.Context, dst *zbstore.RealizationMap, u *url.URL) error {
+func (s *Store) mergeRealizations(ctx context.Context, dst *zbstore.RealizationMap, u *url.URL) error {
 	res, err := fetch(ctx, s.client(), &fetchRequest{
 		url:    u,
 		accept: "application/json,text/*;q=0.9,*/*;q=0.8",
@@ -197,15 +204,26 @@ func (s *Store) addRealizations(ctx context.Context, dst *zbstore.RealizationMap
 			log.Debugf(ctx, "Fetch realizations for %v: %v", dst.DerivationHash, err)
 			return nil
 		}
-		return fmt.Errorf("fetch realizations for %v: %w", dst.DerivationHash, err)
+		if !isClientError(err) {
+			err = temporaryError{err}
+		}
+		return err
 	}
 	doc := new(zbstore.RealizationMap)
 	unmarshalers := jsonv2.UnmarshalFromFunc(zbstore.UnmarshalHashJSONFrom)
 	if err := jsonv2.Unmarshal(res.body, doc, jsonv2.WithUnmarshalers(unmarshalers)); err != nil {
-		return fmt.Errorf("fetch realizations for %v: %v: %v", dst.DerivationHash, u.Redacted(), err)
+		return &url.Error{
+			Op:  "parse",
+			URL: u.Redacted(),
+			Err: err,
+		}
 	}
 	if err := dst.Merge(*doc); err != nil {
-		return fmt.Errorf("fetch realizations for %v: %v: %v", dst.DerivationHash, u.Redacted(), err)
+		return &url.Error{
+			Op:  "parse",
+			URL: u.Redacted(),
+			Err: err,
+		}
 	}
 	return nil
 }
@@ -219,48 +237,46 @@ func (s *Store) PutRealizations(ctx context.Context, realizations zbstore.Realiz
 	if realizations.IsEmpty() {
 		return nil
 	}
+	op := "update realizations for " + realizations.DerivationHash.String()
+	return retry(ctx, op, func() error {
+		hr, err := s.discover(ctx)
+		if err != nil {
+			return err
+		}
 
-	hr, err := s.discover(ctx)
-	if err != nil {
-		return fmt.Errorf("update realizations for %v: %w", realizations.DerivationHash, err)
-	}
-
-	var ec multierror.Collector
-	hasPutAllowed := false
-	hasTemporary := false
-	for u := range s.realizationURLs(&ec, hr, realizations.DerivationHash) {
-		err := s.putRealizations(ctx, u, realizations)
-		if err == nil {
-			if err := ec.Error(); err != nil {
-				log.Warnf(ctx, "While updating realizations for %v: %v", realizations.DerivationHash, err)
+		var ec multierror.Collector
+		hasPutAllowed := false
+		for u := range s.realizationURLs(&ec, hr, realizations.DerivationHash) {
+			err := s.putRealizations(ctx, u, realizations)
+			if err == nil {
+				if err := ec.Error(); err != nil {
+					log.Warnf(ctx, "While %s: %v", op, err)
+				}
+				return nil
 			}
-			return nil
+			if !isClientError(err) {
+				err = temporaryError{err}
+			}
+			ec.Add(err)
+			if !isMethodNotAllowed(err) {
+				hasPutAllowed = true
+			}
 		}
-		ec.Add(err)
-
-		if !isMethodNotAllowed(err) {
-			hasPutAllowed = true
+		if ec.Error() == nil {
+			ec.Add(&url.Error{
+				Op:  "discover",
+				URL: s.URL.Redacted(),
+				Err: fmt.Errorf("no %s relation", realizationRelation),
+			})
+		} else if !hasPutAllowed {
+			ec.Add(&url.Error{
+				Op:  "discover",
+				URL: s.URL.Redacted(),
+				Err: fmt.Errorf("%s not supported for %s relation", http.MethodPut, realizationRelation),
+			})
 		}
-		if !isClientError(err) {
-			hasTemporary = true
-		}
-	}
-	if ec.Error() == nil {
-		ec.Add(permanentError{fmt.Errorf("%s: no %s relation", s.URL.Redacted(), realizationRelation)})
-	} else if !hasPutAllowed {
-		ec.Add(permanentError{fmt.Errorf("%s: %s not supported for %s relation",
-			s.URL.Redacted(), http.MethodPut, realizationRelation)})
-	}
-
-	var ec2 multierror.Collector
-	for err := range multierror.All(ec.Error()) {
-		ec2.Add(fmt.Errorf("update realizations for %v: %w", realizations.DerivationHash, err))
-	}
-	err = ec2.Error()
-	if !hasTemporary {
-		err = permanentError{err}
-	}
-	return err
+		return ec.Error()
+	})
 }
 
 func (s *Store) putRealizations(ctx context.Context, u *url.URL, realizations zbstore.RealizationMap) error {
@@ -316,6 +332,7 @@ func (s *Store) putRealizations(ctx context.Context, u *url.URL, realizations zb
 		}
 	}
 
+	log.Infof(ctx, "Uploading realizations for %s to %s...", realizations.DerivationHash, s.URL.Redacted())
 	err = put(ctx, s.client(), &putRequest{
 		url:    u,
 		origin: s.URL,
@@ -417,46 +434,47 @@ func (obj *httpObject) WriteNAR(ctx context.Context, dst io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("download %s: %v", obj.info.StorePath, err)
 	}
-
-	req := &http.Request{
-		Method: http.MethodGet,
-		URL:    narFileURL,
-		Header: http.Header{
-			"Accept":          {"*/*"},
-			"Accept-Encoding": {httpencoding.Accept},
-		},
-	}
-	resp, err := obj.client.Do(req)
-	if err != nil {
-		// Errors will already be a [*url.Error].
-		return fmt.Errorf("download %s: %v", obj.info.StorePath, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		err := xhttp.ErrorFromResponse(resp)
-		return fmt.Errorf("download %s: %v", obj.info.StorePath, &url.Error{
-			Op:  "get",
-			URL: narFileURL.Redacted(),
-			Err: err,
-		})
-	}
-	decodedBody, err := httpencoding.Decode(resp.Body, resp.Header.Get("Content-Encoding"))
-	if err != nil {
-		return fmt.Errorf("download %s: %v", obj.info.StorePath, &url.Error{
-			Op:  "get",
-			URL: narFileURL.Redacted(),
-			Err: err,
-		})
-	}
-	defer decodedBody.Close()
-	if _, err := io.Copy(dst, decodedBody); err != nil {
-		return fmt.Errorf("download %s: %v", obj.info.StorePath, &url.Error{
-			Op:  "get",
-			URL: narFileURL.Redacted(),
-			Err: err,
-		})
-	}
-	return nil
+	return retry(ctx, "download "+string(obj.info.StorePath), func() error {
+		req := &http.Request{
+			Method: http.MethodGet,
+			URL:    narFileURL,
+			Header: http.Header{
+				"Accept":          {"*/*"},
+				"Accept-Encoding": {httpencoding.Accept},
+			},
+		}
+		resp, err := obj.client.Do(req)
+		if err != nil {
+			// Errors will already be a [*url.Error].
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			err := xhttp.ErrorFromResponse(resp)
+			return &url.Error{
+				Op:  "get",
+				URL: narFileURL.Redacted(),
+				Err: err,
+			}
+		}
+		decodedBody, err := httpencoding.Decode(resp.Body, resp.Header.Get("Content-Encoding"))
+		if err != nil {
+			return &url.Error{
+				Op:  "get",
+				URL: narFileURL.Redacted(),
+				Err: err,
+			}
+		}
+		defer decodedBody.Close()
+		if _, err := io.Copy(dst, decodedBody); err != nil {
+			return &url.Error{
+				Op:  "get",
+				URL: narFileURL.Redacted(),
+				Err: err,
+			}
+		}
+		return nil
+	})
 }
 
 func resolveReference(baseURL, ref *url.URL) (*url.URL, error) {
@@ -467,21 +485,49 @@ func resolveReference(baseURL, ref *url.URL) (*url.URL, error) {
 	return targetURL, nil
 }
 
-type permanentError struct {
+func retry(ctx context.Context, op string, f func() error) error {
+	for t := xtime.NewBackoffTimer(retryBackoffTable[:], retryBackoffJitter); ; {
+		err := f()
+		if !isTemporaryError(err) {
+			var ec multierror.Collector
+			for err := range multierror.All(err) {
+				ec.Add(fmt.Errorf("%s: %w", op, err))
+			}
+			return ec.Error()
+		}
+		log.Warnf(ctx, "%s (will retry): %v", op, err)
+		if err := t.Sleep(ctx); err != nil {
+			return fmt.Errorf("%s: %w", op, err)
+		}
+	}
+}
+
+type temporaryError struct {
 	err error
 }
 
-func (te permanentError) Error() string {
-	return te.err.Error()
-}
+func (te temporaryError) Error() string { return te.err.Error() }
+func (te temporaryError) Unwrap() error { return te.err }
 
-func (te permanentError) Unwrap() error {
-	return te.err
-}
-
-// IsPermanentError reports whether err indicates a failure
-// that likely cannot be resolved by retrying.
-func IsPermanentError(err error) bool {
-	_, ok := errors.AsType[permanentError](err)
+// isTemporaryError reports whether err indicates a failure
+// that might be resolved by retrying.
+func isTemporaryError(err error) bool {
+	_, ok := errors.AsType[temporaryError](err)
 	return ok
+}
+
+const retryBackoffJitter = 0.25
+
+var retryBackoffTable = [...]time.Duration{
+	10 * time.Millisecond,
+	250 * time.Millisecond,
+	500 * time.Millisecond,
+	1 * time.Second,
+	1 * time.Second,
+	1 * time.Second,
+	5 * time.Second,
+	5 * time.Second,
+	5 * time.Second,
+	10 * time.Second,
+	30 * time.Second,
 }

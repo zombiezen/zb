@@ -4,6 +4,7 @@
 package zbstorehttp
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -12,8 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
-	"testing/synctest"
 
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/google/go-cmp/cmp"
@@ -70,6 +71,63 @@ func TestStoreObject(t *testing.T) {
 			t.Error("unexpected error:", err)
 		}
 	})
+
+	t.Run("Errors", func(t *testing.T) {
+		tests := []struct {
+			code      int
+			wantRetry bool
+		}{
+			{http.StatusUnauthorized, false},
+			{http.StatusForbidden, false},
+			{http.StatusPreconditionFailed, true},
+			{http.StatusTooManyRequests, true},
+		}
+
+		for _, test := range tests {
+			name := strings.ReplaceAll(http.StatusText(test.code), " ", "")
+			t.Run(name, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(testcontext.New(t))
+
+				mux := http.NewServeMux()
+				var tryCount atomic.Int32
+				mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+					n := tryCount.Add(1)
+					http.Error(w, http.StatusText(test.code), test.code)
+					if n > 1 {
+						cancel()
+					}
+				})
+				mux.HandleFunc("/discovery.json", func(w http.ResponseWriter, r *http.Request) {
+					http.ServeFile(w, r, testdataPath(t, "../../NotFound/discovery.json"))
+				})
+				srv := httptest.NewServer(mux)
+				defer srv.Close()
+				discoveryURL, err := url.Parse(srv.URL + "/discovery.json")
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				store := &Store{
+					URL:        discoveryURL,
+					HTTPClient: srv.Client(),
+				}
+
+				_, err = store.Object(ctx, "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bork")
+				if err == nil {
+					t.Error("no error returned")
+				} else {
+					t.Log("store.Object:", err)
+				}
+				wantTryCount := int32(1)
+				if test.wantRetry {
+					wantTryCount = 2
+				}
+				if got := tryCount.Load(); got != wantTryCount {
+					t.Errorf("received %d request(s); want %d", got, wantTryCount)
+				}
+			})
+		}
+	})
 }
 
 func TestStoreFetchRealizations(t *testing.T) {
@@ -110,6 +168,71 @@ func TestStoreFetchRealizations(t *testing.T) {
 		}
 		if !got.DerivationHash.Equal(drvHash) {
 			t.Errorf("derivation hash = %v; want %v", got.DerivationHash, drvHash)
+		}
+	})
+
+	t.Run("Errors", func(t *testing.T) {
+		tests := []struct {
+			code      int
+			wantRetry bool
+		}{
+			{http.StatusUnauthorized, false},
+			{http.StatusForbidden, false},
+			{http.StatusPreconditionFailed, true},
+			{http.StatusTooManyRequests, true},
+		}
+
+		for _, test := range tests {
+			name := strings.ReplaceAll(http.StatusText(test.code), " ", "")
+			t.Run(name, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(testcontext.New(t))
+
+				mux := http.NewServeMux()
+				var tryCount atomic.Int32
+				mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+					n := tryCount.Add(1)
+					http.Error(w, http.StatusText(test.code), test.code)
+					if n > 1 {
+						cancel()
+					}
+				})
+				mux.HandleFunc("/discovery.json", func(w http.ResponseWriter, r *http.Request) {
+					http.ServeFile(w, r, testdataPath(t, "../../NotFound/discovery.json"))
+				})
+				srv := httptest.NewServer(mux)
+				defer srv.Close()
+				discoveryURL, err := url.Parse(srv.URL + "/discovery.json")
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				store := &Store{
+					URL:        discoveryURL,
+					HTTPClient: srv.Client(),
+				}
+
+				drvHash := mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+				got, err := store.FetchRealizations(ctx, drvHash)
+				if err == nil {
+					t.Error("no error returned")
+				} else {
+					t.Log("store.FetchRealizations:", err)
+				}
+				if len(got.Realizations) > 0 {
+					realizationsJSON, _ := jsonv2.Marshal(got)
+					t.Errorf("realizations = %s; want {}", realizationsJSON)
+				}
+				if !got.DerivationHash.Equal(drvHash) {
+					t.Errorf("derivation hash = %v; want %v", got.DerivationHash, drvHash)
+				}
+				wantTryCount := int32(1)
+				if test.wantRetry {
+					wantTryCount = 2
+				}
+				if got := tryCount.Load(); got != wantTryCount {
+					t.Errorf("received %d request(s); want %d", got, wantTryCount)
+				}
+			})
 		}
 	})
 }
@@ -253,15 +376,15 @@ func TestStorePutRealizations(t *testing.T) {
 		}
 	})
 
-	t.Run("ClientError", func(t *testing.T) {
+	t.Run("Errors", func(t *testing.T) {
 		tests := []struct {
-			code               int
-			wantPermanentError bool
+			code      int
+			wantRetry bool
 		}{
-			{http.StatusUnauthorized, true},
-			{http.StatusForbidden, true},
-			{http.StatusPreconditionFailed, false},
-			{http.StatusTooManyRequests, false},
+			{http.StatusUnauthorized, false},
+			{http.StatusForbidden, false},
+			{http.StatusPreconditionFailed, true},
+			{http.StatusTooManyRequests, true},
 		}
 
 		for _, test := range tests {
@@ -272,55 +395,60 @@ func TestStorePutRealizations(t *testing.T) {
 					failGetLabel = "Get"
 				}
 				t.Run(name+"/"+failGetLabel, func(t *testing.T) {
-					synctest.Test(t, func(t *testing.T) {
-						ctx := testlog.WithTB(t.Context(), t)
+					ctx, cancel := context.WithCancel(testcontext.New(t))
 
-						mux := http.NewServeMux()
-						mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-							if !failGet && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
-								http.NotFound(w, r)
-							} else {
-								http.Error(w, http.StatusText(test.code), test.code)
-							}
-						})
-						mux.HandleFunc("/discovery.json", func(w http.ResponseWriter, r *http.Request) {
-							http.ServeFile(w, r, testdataPath(t, "../../discovery.json"))
-						})
-						srv := httptest.NewServer(mux)
-						t.Cleanup(srv.Close)
-						discoveryURL, err := url.Parse(srv.URL + "/discovery.json")
-						if err != nil {
-							t.Fatal(err)
-						}
-
-						store := &Store{
-							URL:        discoveryURL,
-							HTTPClient: srv.Client(),
-						}
-
-						drvHash := mustParseHash(t, "sha256:bd172e7b837e02a672e417976696642eaabb97847f61a77cf430f515efc97b61")
-						err = store.PutRealizations(ctx, zbstore.RealizationMap{
-							DerivationHash: drvHash,
-							Realizations: map[string][]*zbstore.Realization{
-								zbstore.DefaultDerivationOutputName: {
-									{
-										OutputPath: "/opt/zb/store/mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt",
-									},
-								},
-							},
-						})
-						if err == nil {
-							t.Error("store.PutRealizations did not return an error")
+					mux := http.NewServeMux()
+					var tryCount atomic.Int32
+					mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+						if !failGet && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+							http.NotFound(w, r)
 						} else {
-							t.Log("store.PutRealizations:", err)
-						}
-
-						if got := IsPermanentError(err); got && !test.wantPermanentError {
-							t.Error("Error is permanent")
-						} else if !got && test.wantPermanentError {
-							t.Error("Error is not permanent")
+							n := tryCount.Add(1)
+							http.Error(w, http.StatusText(test.code), test.code)
+							if n > 1 {
+								cancel()
+							}
 						}
 					})
+					mux.HandleFunc("/discovery.json", func(w http.ResponseWriter, r *http.Request) {
+						http.ServeFile(w, r, testdataPath(t, "../../discovery.json"))
+					})
+					srv := httptest.NewServer(mux)
+					t.Cleanup(srv.Close)
+					discoveryURL, err := url.Parse(srv.URL + "/discovery.json")
+					if err != nil {
+						t.Fatal(err)
+					}
+
+					store := &Store{
+						URL:        discoveryURL,
+						HTTPClient: srv.Client(),
+					}
+
+					drvHash := mustParseHash(t, "sha256:bd172e7b837e02a672e417976696642eaabb97847f61a77cf430f515efc97b61")
+					err = store.PutRealizations(ctx, zbstore.RealizationMap{
+						DerivationHash: drvHash,
+						Realizations: map[string][]*zbstore.Realization{
+							zbstore.DefaultDerivationOutputName: {
+								{
+									OutputPath: "/opt/zb/store/mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt",
+								},
+							},
+						},
+					})
+					if err == nil {
+						t.Error("store.PutRealizations did not return an error")
+					} else {
+						t.Log("store.PutRealizations:", err)
+					}
+
+					wantTryCount := int32(1)
+					if test.wantRetry {
+						wantTryCount = 2
+					}
+					if got := tryCount.Load(); got != wantTryCount {
+						t.Errorf("received %d request(s); want %d", got, wantTryCount)
+					}
 				})
 			}
 		}

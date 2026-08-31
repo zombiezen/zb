@@ -55,138 +55,141 @@ type PutObjectRequest struct {
 // then the .narinfo file is never uploaded.
 func (s *Store) PutObject(ctx context.Context, req *PutObjectRequest) error {
 	if req.StorePath == "" {
-		return permanentError{fmt.Errorf("upload: path not set")}
+		return fmt.Errorf("upload: path not set")
 	}
 	if req.ContentAddress.IsZero() {
-		return permanentError{fmt.Errorf("upload %s: content address not set", req.StorePath)}
+		return fmt.Errorf("upload %s: content address not set", req.StorePath)
 	}
 
-	hr, err := s.discover(ctx)
-	if err != nil {
-		return fmt.Errorf("upload %s: %w", req.StorePath, err)
-	}
-	putInfoURLs, err := s.findExistingInfoForPut(ctx, hr, req)
-	if !errors.Is(err, zbstore.ErrNotFound) {
-		var ec2 multierror.Collector
-		for err := range multierror.All(err) {
-			ec2.Add(fmt.Errorf("upload %s: %w", req.StorePath, err))
-		}
-		return ec2.Error()
-	}
-
-	narLink, hasNARLink := hr.Links[narRelation].Get()
-	if !hasNARLink {
-		return permanentError{fmt.Errorf("upload %s: %s: link relation %s: not found", req.StorePath, s.URL.Redacted(), narRelation)}
-	}
-	params := struct {
-		Base   string
-		Digest string
-	}{
-		Base:   req.StorePath.Base(),
-		Digest: req.StorePath.Digest(),
-	}
-	narURL, err := narLink.Expand(params)
-	if err != nil {
-		return permanentError{fmt.Errorf("upload %s: %s: link relation %s: %v",
-			req.StorePath, s.URL.Redacted(), narRelation, err)}
-	}
-	narURL, err = resolveReference(s.URL, narURL)
-	if err != nil {
-		return permanentError{fmt.Errorf("upload %s: %s: link relation %s: %v",
-			req.StorePath, s.URL.Redacted(), narRelation, err)}
-	}
-
-	grp := &narBodyGroup{
-		f: req.GetNAR,
-		info: zbstore.ObjectInfo{
-			StorePath:      req.StorePath,
-			NARSize:        req.NARSize,
-			References:     req.References,
-			ContentAddress: req.ContentAddress,
-		},
-		createTemp: s.CreateTemp,
-	}
-	const cacheControl = "max-age=2592000" // 1 week
-	uploadNARRequest := &putRequest{
-		url:           narURL,
-		origin:        s.URL,
-		contentLength: -1,
-		contentType:   nar.MIMEType,
-		cacheControl:  cacheControl,
-		getContent:    grp.new,
-		// Replacement is fine, even if the contents differ.
-		// We want PutObject to be idempotent, especially if a previous operation failed.
-		// If there is a URL collision and multiple distinct .narinfo files referencing it,
-		// then the other ones will detect the differing content address.
-		noReplace: false,
-	}
-	if grp.info.HasNARSize() {
-		uploadNARRequest.contentLength = grp.info.NARSize
-	}
-	uploadNARError := put(ctx, s.client(), uploadNARRequest)
-	copyResult, copyError := grp.wait()
-	if uploadNARError != nil {
-		err := fmt.Errorf("upload %s: %v", req.StorePath, uploadNARError)
-		if isClientError(uploadNARError) {
-			err = permanentError{err}
-		}
-		return err
-	}
-	if copyError != nil {
-		return fmt.Errorf("upload %s: %v", req.StorePath, copyError)
-	}
-
-	var ec multierror.Collector
-	for _, u := range putInfoURLs {
-		relNARURL, err := xurl.Rel(u.url, narURL)
+	return retry(ctx, "upload "+string(req.StorePath), func() error {
+		hr, err := s.discover(ctx)
 		if err != nil {
-			ec.Add(err)
-			continue
+			return err
 		}
-		narinfoData, err := (&NARInfo{
-			StorePath:   req.StorePath,
-			References:  req.References,
-			URL:         relNARURL.String(),
-			Compression: NoCompression,
-			CA:          req.ContentAddress,
-			NARHash:     copyResult.narHash,
-			NARSize:     copyResult.narSize,
-		}).MarshalText()
-		if err != nil {
-			ec.Add(err)
-			continue
+		putInfoURLs, err := s.findExistingInfoForPut(ctx, hr, req)
+		if !errors.Is(err, zbstore.ErrNotFound) {
+			return err
 		}
-		uploadError := put(ctx, s.client(), &putRequest{
-			url:    u.url,
-			origin: s.URL,
-			getContent: func() (io.ReadCloser, error) {
-				return io.NopCloser(bytes.NewReader(narinfoData)), nil
-			},
-			contentLength:  int64(len(narinfoData)),
-			contentType:    NARInfoMIMEType,
-			acceptEncoding: u.acceptEncoding,
-			cacheControl:   cacheControl,
-			noReplace:      true,
-		})
-		if uploadError == nil {
-			if err := ec.Error(); err != nil {
-				log.Warnf(ctx, "While uploading %s: %v", req.StorePath, err)
+
+		narLink, hasNARLink := hr.Links[narRelation].Get()
+		if !hasNARLink {
+			return &url.Error{
+				Op:  "discover",
+				URL: s.URL.Redacted(),
+				Err: fmt.Errorf("link relation %s: not found", narRelation),
 			}
-			return nil
 		}
-		if isClientError(uploadError) {
-			ec.Add(permanentError{uploadError})
-		} else {
-			ec.Add(uploadError)
-			break
+		params := struct {
+			Base   string
+			Digest string
+		}{
+			Base:   req.StorePath.Base(),
+			Digest: req.StorePath.Digest(),
 		}
-	}
+		narURL, err := narLink.Expand(params)
+		if err != nil {
+			return &url.Error{
+				Op:  "discover",
+				URL: s.URL.Redacted(),
+				Err: fmt.Errorf("link relation %s: %v", narRelation, err),
+			}
+		}
+		narURL, err = resolveReference(s.URL, narURL)
+		if err != nil {
+			return &url.Error{
+				Op:  "discover",
+				URL: s.URL.Redacted(),
+				Err: fmt.Errorf("link relation %s: %v", narRelation, err),
+			}
+		}
 
-	var ec2 multierror.Collector
-	for err := range multierror.All(ec.Error()) {
-		ec2.Add(fmt.Errorf("upload %s: %w", req.StorePath, err))
-	}
-	return ec2.Error()
+		log.Infof(ctx, "Uploading %s to %s...", req.StorePath, narURL.Redacted())
+		grp := &narBodyGroup{
+			f: req.GetNAR,
+			info: zbstore.ObjectInfo{
+				StorePath:      req.StorePath,
+				NARSize:        req.NARSize,
+				References:     req.References,
+				ContentAddress: req.ContentAddress,
+			},
+			createTemp: s.CreateTemp,
+		}
+		const cacheControl = "max-age=2592000" // 1 week
+		uploadNARRequest := &putRequest{
+			url:           narURL,
+			origin:        s.URL,
+			contentLength: -1,
+			contentType:   nar.MIMEType,
+			cacheControl:  cacheControl,
+			getContent:    grp.new,
+			// Replacement is fine, even if the contents differ.
+			// We want PutObject to be idempotent, especially if a previous operation failed.
+			// If there is a URL collision and multiple distinct .narinfo files referencing it,
+			// then the other ones will detect the differing content address.
+			noReplace: false,
+		}
+		if req.NARSize > 0 {
+			uploadNARRequest.contentLength = req.NARSize
+		}
+		uploadNARError := put(ctx, s.client(), uploadNARRequest)
+		copyResult, copyError := grp.wait()
+		if uploadNARError != nil {
+			if !isClientError(uploadNARError) {
+				uploadNARError = temporaryError{uploadNARError}
+			}
+			return uploadNARError
+		}
+		if copyError != nil {
+			return copyError
+		}
+
+		var ec multierror.Collector
+		for _, u := range putInfoURLs {
+			relNARURL, err := xurl.Rel(u.url, narURL)
+			if err != nil {
+				ec.Add(err)
+				continue
+			}
+			narinfoData, err := (&NARInfo{
+				StorePath:   req.StorePath,
+				References:  req.References,
+				URL:         relNARURL.String(),
+				Compression: NoCompression,
+				CA:          req.ContentAddress,
+				NARHash:     copyResult.narHash,
+				NARSize:     copyResult.narSize,
+			}).MarshalText()
+			if err != nil {
+				ec.Add(err)
+				continue
+			}
+			uploadError := put(ctx, s.client(), &putRequest{
+				url:    u.url,
+				origin: s.URL,
+				getContent: func() (io.ReadCloser, error) {
+					return io.NopCloser(bytes.NewReader(narinfoData)), nil
+				},
+				contentLength:  int64(len(narinfoData)),
+				contentType:    NARInfoMIMEType,
+				acceptEncoding: u.acceptEncoding,
+				cacheControl:   cacheControl,
+				noReplace:      true,
+			})
+			switch {
+			case uploadError == nil:
+				if err := ec.Error(); err != nil {
+					log.Warnf(ctx, "While uploading %s: %v", req.StorePath, err)
+				}
+				return nil
+			case isClientError(uploadError):
+				ec.Add(uploadError)
+			default:
+				ec.Add(temporaryError{uploadError})
+				return ec.Error()
+			}
+		}
+		return ec.Error()
+	})
 }
 
 type urlRequestNegotiation struct {
@@ -234,9 +237,17 @@ func (s *Store) findExistingInfoForPut(ctx context.Context, discoveryDocument *h
 		}
 	}
 	if !hasInfoURLs {
-		ec.Add(permanentError{fmt.Errorf("%s: missing valid %s link", s.URL.Redacted(), narInfoRelation)})
+		ec.Add(&url.Error{
+			Op:  "discover",
+			URL: s.URL.Redacted(),
+			Err: fmt.Errorf("missing valid %s link", narInfoRelation),
+		})
 	} else if len(putURLs) == 0 {
-		ec.Add(permanentError{fmt.Errorf("%s: %s links do not permit %s", s.URL.Redacted(), narInfoRelation, http.MethodPut)})
+		ec.Add(&url.Error{
+			Op:  "discover",
+			URL: s.URL.Redacted(),
+			Err: fmt.Errorf("%s links do not permit %s", narInfoRelation, http.MethodPut),
+		})
 	}
 	if err := ec.Error(); err != nil {
 		return putURLs, err
@@ -250,20 +261,34 @@ func (s *Store) findExistingInfoForPut(ctx context.Context, discoveryDocument *h
 func ensureInfoMatches(ec *multierror.Collector, req *PutObjectRequest, u *url.URL, remoteInfo *NARInfo) bool {
 	matches := true
 	if remoteInfo.StorePath != req.StorePath {
-		ec.Add(permanentError{fmt.Errorf("%s: mismatched store path %s", u.Redacted(), remoteInfo.StorePath)})
+		ec.Add(&url.Error{
+			Op:  "read",
+			URL: u.Redacted(),
+			Err: fmt.Errorf("mismatched store path %s", remoteInfo.StorePath),
+		})
 		matches = false
 	}
 	if remoteInfo.CA.IsZero() {
-		ec.Add(permanentError{fmt.Errorf("%s: missing content address", u.Redacted())})
+		ec.Add(&url.Error{
+			Op:  "read",
+			URL: u.Redacted(),
+			Err: fmt.Errorf("missing content address"),
+		})
 		matches = false
 	} else if !remoteInfo.CA.Equal(req.ContentAddress) {
-		ec.Add(permanentError{fmt.Errorf("%s: content address = %v; expecting %v",
-			u.Redacted(), remoteInfo.CA, req.ContentAddress)})
+		ec.Add(&url.Error{
+			Op:  "read",
+			URL: u.Redacted(),
+			Err: fmt.Errorf("content address = %v; expecting %v", remoteInfo.CA, req.ContentAddress),
+		})
 		matches = false
 	}
 	if req.NARSize > 0 && remoteInfo.NARSize != req.NARSize {
-		ec.Add(permanentError{fmt.Errorf("%s: nar size = %d bytes; expecting %d bytes",
-			u.Redacted(), remoteInfo.NARSize, req.NARSize)})
+		ec.Add(&url.Error{
+			Op:  "read",
+			URL: u.Redacted(),
+			Err: fmt.Errorf("nar size = %d bytes; expecting %d bytes", remoteInfo.NARSize, req.NARSize),
+		})
 		matches = false
 	}
 	return matches

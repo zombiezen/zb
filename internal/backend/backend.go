@@ -1299,36 +1299,28 @@ func (s *Server) uploadObject(ctx context.Context, obj *zbstore.ObjectInfo) erro
 		return fmt.Errorf("upload %s: %v", obj.StorePath, err)
 	}
 
-	for t := xtime.NewBackoffTimer(uploadBackoffTable[:], uploadBackoffJitter); ; {
-		var dumpGroup sync.WaitGroup
-		err := s.upload.PutObject(ctx, &zbstorehttp.PutObjectRequest{
-			StorePath:      obj.StorePath,
-			References:     obj.References,
-			ContentAddress: obj.ContentAddress,
-			NARSize:        obj.NARSize,
-			GetNAR: func() (io.ReadCloser, error) {
-				pr, pw := io.Pipe()
-				dumpGroup.Go(func() {
-					err := nar.DumpPath(pw, realPath)
-					pw.CloseWithError(err)
-				})
-				return pr, nil
-			},
-		})
-		dumpGroup.Wait()
+	var dumpGroup sync.WaitGroup
+	err = s.upload.PutObject(ctx, &zbstorehttp.PutObjectRequest{
+		StorePath:      obj.StorePath,
+		References:     obj.References,
+		ContentAddress: obj.ContentAddress,
+		NARSize:        obj.NARSize,
+		GetNAR: func() (io.ReadCloser, error) {
+			pr, pw := io.Pipe()
+			dumpGroup.Go(func() {
+				err := nar.DumpPath(pw, realPath)
+				pw.CloseWithError(err)
+			})
+			return pr, nil
+		},
+	})
+	dumpGroup.Wait()
 
-		if err == nil {
-			log.Infof(ctx, "Uploaded %s", obj.StorePath)
-			return nil
-		}
-		if zbstorehttp.IsPermanentError(err) {
-			return err
-		}
-		log.Warnf(ctx, "%v", err)
-		if err := t.Sleep(ctx); err != nil {
-			return fmt.Errorf("upload %s: %w", obj.StorePath, err)
-		}
+	if err != nil {
+		return err
 	}
+	log.Infof(ctx, "Uploaded %s", obj.StorePath)
+	return nil
 }
 
 // makeObjectInfoMap builds a map of the transitive closure of [*zbstore.ObjectInfo] values
@@ -1384,21 +1376,12 @@ func (s *Server) uploadRealizations(ctx context.Context, realizations zbstore.Re
 		return
 	}
 
-	for t := xtime.NewBackoffTimer(uploadBackoffTable[:], uploadBackoffJitter); ; {
-		err := s.upload.PutRealizations(ctx, realizations)
-		if err == nil {
-			log.Infof(ctx, "Uploaded realizations for %v", realizations.DerivationHash)
-			return
-		}
+	err := s.upload.PutRealizations(ctx, realizations)
+	if err == nil {
 		log.Warnf(ctx, "%v", err)
-		if zbstorehttp.IsPermanentError(err) {
-			return
-		}
-
-		if err := t.Sleep(ctx); err != nil {
-			return
-		}
+		return
 	}
+	log.Infof(ctx, "Uploaded realizations for %v", realizations.DerivationHash)
 }
 
 func (s *Server) gcLogs(ctx context.Context, window time.Duration) {
