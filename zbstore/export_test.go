@@ -230,12 +230,19 @@ func TestExportWriter(t *testing.T) {
 	})
 
 	t.Run("StoreImport/ImmediateEOFTrailingData", func(t *testing.T) {
-		ew := NewExportWriter(io.Discard)
-		if err := ew.StoreImport(t.Context(), strings.NewReader(exportEOFMarker+"\x00")); err == nil {
-			t.Error("StoreImport did not return error")
-		} else {
-			t.Log("StoreImport:", err)
+		got := new(bytes.Buffer)
+		ew := NewExportWriter(got)
+		r := strings.NewReader(exportEOFMarker + "\x00")
+		if err := ew.StoreImport(t.Context(), r); err != nil {
+			t.Error("StoreImport:", err)
 		}
+		if r.Len() != 1 {
+			t.Errorf("remaining bytes = %d; want 1", r.Len())
+		}
+		if err := ew.Close(); err != nil {
+			t.Error("Close:", err)
+		}
+		verifyExport(t, got.Bytes())
 	})
 
 	t.Run("StoreImport/InvalidMagic", func(t *testing.T) {

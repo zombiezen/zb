@@ -541,7 +541,12 @@ func (sc *storeConfig) UnmarshalText(text []byte) error {
 	return nil
 }
 
-func (sc *storeConfig) toStore(provideHTTPClient func() (zbstorehttp.Client, error)) (backend.Store, error) {
+type storeWriter interface {
+	backend.Store
+	backend.Writer
+}
+
+func (sc *storeConfig) toStore(provideHTTPClient func() (zbstorehttp.Client, error)) (storeWriter, error) {
 	if sc == nil {
 		return zbstore.Null{}, nil
 	}

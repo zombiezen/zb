@@ -51,7 +51,7 @@ func writeExport(ctx context.Context, w *jsonrpc.Writer, id string, r io.Reader)
 	defer func() { <-done }()
 	go func() {
 		defer close(done)
-		err := nopImporter{}.StoreImport(ctx, io.TeeReader(r, pw))
+		err := zbstore.Null{}.StoreImport(ctx, io.TeeReader(r, pw))
 		pw.CloseWithError(err)
 	}()
 
@@ -110,33 +110,3 @@ func (req *exportRPCRequest) MarshalJSONTo(enc *jsontext.Encoder) (err error) {
 	}
 	return nil
 }
-
-// ReceiverImporter adapts a [zbstore.NARReceiver] into a [zbstore.Importer].
-type ReceiverImporter struct {
-	receiver zbstore.NARReceiver
-}
-
-// NewReceiverImporter returns a new [ReceiverImporter] that sends data to the given receiver.
-// NewReceiverImporter panics if receiver is nil.
-func NewReceiverImporter(receiver zbstore.NARReceiver) *ReceiverImporter {
-	if receiver == nil {
-		panic("nil receiver")
-	}
-	return &ReceiverImporter{receiver}
-}
-
-// StoreImport implements [zbstore.Importer] by calling [zbstore.ReceiveExport] on the given body.
-func (imp *ReceiverImporter) StoreImport(ctx context.Context, body io.Reader) error {
-	return zbstore.ReceiveExport(imp.receiver, body)
-}
-
-type nopImporter struct{}
-
-func (nopImporter) StoreImport(ctx context.Context, r io.Reader) error {
-	return zbstore.ReceiveExport(nopReceiver{}, r)
-}
-
-type nopReceiver struct{}
-
-func (nopReceiver) Write(p []byte) (n int, err error)         { return len(p), nil }
-func (nopReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {}

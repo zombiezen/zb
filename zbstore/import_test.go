@@ -17,8 +17,8 @@ import (
 	. "zb.256lights.llc/pkg/zbstore"
 )
 
-func TestReceiveExport(t *testing.T) {
-	dir := filepath.Join("testdata", "TestReceiveExport")
+func TestBufferedImporter(t *testing.T) {
+	dir := filepath.Join("testdata", "TestBufferedImporter")
 	listing, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -37,6 +37,7 @@ func TestReceiveExport(t *testing.T) {
 		txtarFileName := filepath.Join(dir, testName+".txt")
 
 		t.Run(testName, func(t *testing.T) {
+			ctx := t.Context()
 			input, err := os.ReadFile(inputFileName)
 			if err != nil {
 				t.Fatal(err)
@@ -49,11 +50,11 @@ func TestReceiveExport(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			receiver := new(storetest.BlobReceiver)
-			if err := ReceiveExport(receiver, bytes.NewReader(input)); err != nil {
+			var got storetest.BlobSlice
+			if err := got.StoreImport(ctx, bytes.NewReader(input)); err != nil {
 				t.Error(err)
 			}
-			if diff := cmp.Diff(want, storetest.BlobSlice(receiver.Blobs), storetest.TransformSortedSet[Path](), cmpopts.EquateEmpty()); diff != "" {
+			if diff := cmp.Diff(want, got, storetest.TransformSortedSet[Path](), cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("objects (-want +got):\n%s", diff)
 			}
 		})

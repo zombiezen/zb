@@ -17,6 +17,7 @@ import (
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
 	"golang.org/x/sync/errgroup"
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -70,6 +71,41 @@ func (c *Client) Object(ctx context.Context, path zbstore.Path) (zbstore.Object,
 		store: c,
 		info:  *resp.Info.WithPath(path),
 	}, nil
+}
+
+// WriteObject implements [zbstore.ObjectWriter]
+// by sending `nix-store --export` data over the underlying connection.
+// WriteObject will return an error if s.Handler is not a [*jsonrpc.Client] using a [*Codec].
+func (c *Client) WriteObject(ctx context.Context, object zbstore.Object) error {
+	path := object.Info().StorePath
+	if _, err := c.Object(ctx, path); err == nil {
+		// Already exists: no need to re-import.
+		log.Debugf(ctx, "Using existing store path %s", path)
+		return nil
+	} else if !errors.Is(err, zbstore.ErrNotFound) {
+		return fmt.Errorf("write %s: %v", path, err)
+	}
+
+	pr, pw := io.Pipe()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer pw.Close()
+		exporter := zbstore.NewExportWriter(pw)
+		if err := exporter.WriteObject(ctx, object); err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		if err := exporter.Close(); err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+	}()
+
+	err := c.StoreImport(ctx, pr)
+	pr.Close()
+	<-done
+	return err
 }
 
 // StoreImport implements [zbstore.Importer]
@@ -217,7 +253,11 @@ func (obj *object) WriteNAR(ctx context.Context, dst io.Writer) error {
 		return err
 	})
 	grp.Go(func() error {
-		err := zbstore.ReceiveExport(&singleNARReceiver{w: dst}, pr)
+		snw := &singleNARWriter{w: dst}
+		err := (&zbstore.BufferedImporter{
+			ObjectWriter:  snw,
+			BufferCreator: snw,
+		}).StoreImport(ctx, pr)
 		pr.CloseWithError(err)
 		return err
 	})
@@ -227,20 +267,40 @@ func (obj *object) WriteNAR(ctx context.Context, dst io.Writer) error {
 	return nil
 }
 
-type singleNARReceiver struct {
+type singleNARWriter struct {
 	w        io.Writer
 	received bool
 }
 
-func (snr *singleNARReceiver) Write(p []byte) (n int, err error) {
-	if snr.received {
-		return 0, fmt.Errorf("received multiple store objects from export")
+func (snw *singleNARWriter) WriteObject(ctx context.Context, object zbstore.Object) error {
+	if snw.received {
+		return errors.New("received multiple store objects from export")
 	}
-	return snr.w.Write(p)
+	snw.received = true
+	return nil
 }
 
-func (snr *singleNARReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
-	snr.received = true
+func (snw *singleNARWriter) CreateBuffer(size int64) (bytebuffer.ReadWriteSeekCloser, error) {
+	if snw.received {
+		return nil, errors.New("started buffer for second object")
+	}
+	return onlyWriter{snw.w}, nil
+}
+
+type onlyWriter struct {
+	io.Writer
+}
+
+func (onlyWriter) Read(p []byte) (int, error) {
+	return 0, errors.New("cannot read when writing single NAR")
+}
+
+func (onlyWriter) Seek(offset int64, whence int) (int64, error) {
+	return 0, errors.New("cannot seek when writing single NAR")
+}
+
+func (onlyWriter) Close() error {
+	return nil
 }
 
 // clientCodec implements [jsonrpc.ClientCodec] on an [io.ReadWriteCloser]
@@ -396,14 +456,14 @@ func (cc *clientCodec) receiveExport(id string) error {
 	}
 	var importError error
 	if w == nil {
-		importError = nopImporter{}.StoreImport(cc.ctx, cc.r)
+		importError = zbstore.Null{}.StoreImport(cc.ctx, cc.r)
 	} else {
 		// The Importer.Import method determines the boundary of the body.
 		// When we tee, we don't want copy failures downstream
 		// to mess up our JSON-RPC connection.
 		// We swallow the errors and try to read the `nix-store --export` data to the end.
 		ecw := &errorCaptureWriter{w: w}
-		importError = nopImporter{}.StoreImport(cc.ctx, io.TeeReader(cc.r, ecw))
+		importError = zbstore.Null{}.StoreImport(cc.ctx, io.TeeReader(cc.r, ecw))
 		done <- cmp.Or(importError, ecw.err)
 	}
 	log.Debugf(cc.ctx, "Finished receiving RPC export id=%+q err=%v", id, importError)

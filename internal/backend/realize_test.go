@@ -36,7 +36,7 @@ func TestRealizeSingleDerivation(t *testing.T) {
 
 	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -46,10 +46,10 @@ func TestRealizeSingleDerivation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, nil); err != nil {
+	if err := data.writeTo(ctx, server, nil); err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, data, nil)
+	runScriptTest(ctx, t, dir, server, data, nil)
 }
 
 func TestRealizeReuse(t *testing.T) {
@@ -57,7 +57,7 @@ func TestRealizeReuse(t *testing.T) {
 
 	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -67,10 +67,10 @@ func TestRealizeReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, nil); err != nil {
+	if err := data.writeTo(ctx, server, nil); err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, data, nil)
+	runScriptTest(ctx, t, dir, server, data, nil)
 }
 
 func TestRealizeDisableReuse(t *testing.T) {
@@ -78,7 +78,7 @@ func TestRealizeDisableReuse(t *testing.T) {
 
 	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -88,10 +88,10 @@ func TestRealizeDisableReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, nil); err != nil {
+	if err := data.writeTo(ctx, server, nil); err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, data, nil)
+	runScriptTest(ctx, t, dir, server, data, nil)
 }
 
 func TestRealizeMultiStep(t *testing.T) {
@@ -99,7 +99,7 @@ func TestRealizeMultiStep(t *testing.T) {
 
 	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -109,10 +109,10 @@ func TestRealizeMultiStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, nil); err != nil {
+	if err := data.writeTo(ctx, server, nil); err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, data, nil)
+	runScriptTest(ctx, t, dir, server, data, nil)
 }
 
 func TestRealizeReferenceToDep(t *testing.T) {
@@ -120,7 +120,7 @@ func TestRealizeReferenceToDep(t *testing.T) {
 
 	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -130,10 +130,10 @@ func TestRealizeReferenceToDep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, nil); err != nil {
+	if err := data.writeTo(ctx, server, nil); err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, data, nil)
+	runScriptTest(ctx, t, dir, server, data, nil)
 }
 
 func TestRealizeInputReference(t *testing.T) {
@@ -162,10 +162,10 @@ func TestRealizeInputReference(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 		Options: Options{
-			Upload: &zbstorehttp.Store{
+			Writer: &zbstorehttp.Store{
 				URL: fileurl.FromPath(discoveryPath),
 				HTTPClient: &http.Client{
 					Transport: fileurl.Transport{},
@@ -181,10 +181,10 @@ func TestRealizeInputReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, nil); err != nil {
+	if err := data.writeTo(ctx, server, nil); err != nil {
 		t.Fatal(err)
 	}
-	vars := runScriptTest(ctx, t, dir, client, data, nil)
+	vars := runScriptTest(ctx, t, dir, server, data, nil)
 	inputPath, _, err := dir.ParsePath(vars["in"])
 	if err != nil {
 		t.Fatal("in:", err)
@@ -252,7 +252,7 @@ func TestRealizeSelfReference(t *testing.T) {
 
 	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -262,10 +262,10 @@ func TestRealizeSelfReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, nil); err != nil {
+	if err := data.writeTo(ctx, server, nil); err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, data, nil)
+	runScriptTest(ctx, t, dir, server, data, nil)
 }
 
 func TestRealizeFixed(t *testing.T) {
@@ -273,7 +273,7 @@ func TestRealizeFixed(t *testing.T) {
 
 	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -283,10 +283,10 @@ func TestRealizeFixed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, nil); err != nil {
+	if err := data.writeTo(ctx, server, nil); err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, data, nil)
+	runScriptTest(ctx, t, dir, server, data, nil)
 }
 
 func TestRealizeFailure(t *testing.T) {
@@ -294,7 +294,7 @@ func TestRealizeFailure(t *testing.T) {
 
 	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -304,10 +304,10 @@ func TestRealizeFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, nil); err != nil {
+	if err := data.writeTo(ctx, server, nil); err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, data, nil)
+	runScriptTest(ctx, t, dir, server, data, nil)
 }
 
 func TestRealizeNoOutput(t *testing.T) {
@@ -315,7 +315,7 @@ func TestRealizeNoOutput(t *testing.T) {
 
 	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -325,10 +325,10 @@ func TestRealizeNoOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, nil); err != nil {
+	if err := data.writeTo(ctx, server, nil); err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, data, nil)
+	runScriptTest(ctx, t, dir, server, data, nil)
 }
 
 func TestRealizeCores(t *testing.T) {
@@ -339,7 +339,7 @@ func TestRealizeCores(t *testing.T) {
 		t.Run(fmt.Sprintf("N%d", n), func(t *testing.T) {
 			ctx := testcontext.New(t)
 			dir := backendtest.NewStoreDirectory(t)
-			_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+			server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 				TempDir: t.TempDir(),
 				Options: Options{
 					CoresPerBuild: n,
@@ -352,10 +352,10 @@ func TestRealizeCores(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := data.writeTo(ctx, client, nil); err != nil {
+			if err := data.writeTo(ctx, server, nil); err != nil {
 				t.Fatal(err)
 			}
-			runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
+			runScriptTest(ctx, t, dir, server, data, &scriptTestOptions{
 				initialEnv: map[string]string{
 					"cores": strconv.Itoa(n),
 				},
@@ -378,7 +378,7 @@ func TestRealizeFetchURL(t *testing.T) {
 	defer srv.Close()
 
 	dir := backendtest.NewStoreDirectory(t)
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -390,10 +390,10 @@ func TestRealizeFetchURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, nil); err != nil {
+	if err := data.writeTo(ctx, server, nil); err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, data, nil)
+	runScriptTest(ctx, t, dir, server, data, nil)
 }
 
 func TestRealizeSignature(t *testing.T) {
@@ -411,7 +411,7 @@ func TestRealizeSignature(t *testing.T) {
 		0xf4, 0xd1, 0x60, 0x01, 0xf7, 0x62, 0x49, 0x61,
 		0x91, 0xbd, 0x66, 0xd7, 0x62, 0x51, 0x94, 0x70,
 	}
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 		Options: Options{
 			Keyring: &Keyring{
@@ -427,10 +427,10 @@ func TestRealizeSignature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, nil); err != nil {
+	if err := data.writeTo(ctx, server, nil); err != nil {
 		t.Fatal(err)
 	}
-	vars := runScriptTest(ctx, t, dir, client, data, nil)
+	vars := runScriptTest(ctx, t, dir, server, data, nil)
 
 	got := new(zbstorerpc.Build)
 	if err := jsonv2.Unmarshal([]byte(vars["build"]), got); err != nil {
@@ -502,7 +502,7 @@ func TestRealizeSingleDerivationFallback(t *testing.T) {
 	dir := backendtest.NewStoreDirectory(t)
 
 	fallbackStore := new(storetest.Store)
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 		Options: Options{
 			Fallback: fallbackStore,
@@ -515,10 +515,10 @@ func TestRealizeSingleDerivationFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, fallbackStore); err != nil {
+	if err := data.writeTo(ctx, server, fallbackStore); err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
+	runScriptTest(ctx, t, dir, server, data, &scriptTestOptions{
 		fallback: fallbackStore,
 	})
 }
@@ -530,7 +530,7 @@ func TestRealizeWithImproperlyNamedFallback(t *testing.T) {
 	dir := backendtest.NewStoreDirectory(t)
 
 	fallbackStore := new(storetest.Store)
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 		Options: Options{
 			Fallback: fallbackStore,
@@ -543,10 +543,10 @@ func TestRealizeWithImproperlyNamedFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, fallbackStore); err != nil {
+	if err := data.writeTo(ctx, server, fallbackStore); err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
+	runScriptTest(ctx, t, dir, server, data, &scriptTestOptions{
 		fallback: fallbackStore,
 	})
 }
@@ -561,7 +561,7 @@ func TestRealizeMultiStepFallback(t *testing.T) {
 	dir := backendtest.NewStoreDirectory(t)
 
 	fallbackStore := new(storetest.Store)
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 		Options: Options{
 			Fallback: fallbackStore,
@@ -574,10 +574,10 @@ func TestRealizeMultiStepFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, fallbackStore); err != nil {
+	if err := data.writeTo(ctx, server, fallbackStore); err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
+	runScriptTest(ctx, t, dir, server, data, &scriptTestOptions{
 		fallback: fallbackStore,
 	})
 }
@@ -591,7 +591,7 @@ func TestRealizeMultiStepFallbackIntermediate(t *testing.T) {
 	dir := backendtest.NewStoreDirectory(t)
 
 	fallbackStore := new(storetest.Store)
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 		Options: Options{
 			Fallback: fallbackStore,
@@ -604,10 +604,10 @@ func TestRealizeMultiStepFallbackIntermediate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, fallbackStore); err != nil {
+	if err := data.writeTo(ctx, server, fallbackStore); err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
+	runScriptTest(ctx, t, dir, server, data, &scriptTestOptions{
 		fallback: fallbackStore,
 	})
 }
@@ -623,7 +623,7 @@ func TestRealizeMultiStepFallbackMissingObject(t *testing.T) {
 	dir := backendtest.NewStoreDirectory(t)
 
 	fallbackStore := new(storetest.Store)
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 		Options: Options{
 			Fallback: fallbackStore,
@@ -636,10 +636,10 @@ func TestRealizeMultiStepFallbackMissingObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, fallbackStore); err != nil {
+	if err := data.writeTo(ctx, server, fallbackStore); err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
+	runScriptTest(ctx, t, dir, server, data, &scriptTestOptions{
 		fallback: fallbackStore,
 	})
 }
@@ -650,7 +650,7 @@ func TestRealizeIssue288(t *testing.T) {
 	ctx := testcontext.New(t)
 	dir := backendtest.NewStoreDirectory(t)
 
-	_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
@@ -660,10 +660,10 @@ func TestRealizeIssue288(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, nil); err != nil {
+	if err := data.writeTo(ctx, server, nil); err != nil {
 		t.Fatal(err)
 	}
-	runScriptTest(ctx, t, dir, client, data, nil)
+	runScriptTest(ctx, t, dir, server, data, nil)
 }
 
 func TestRealizeUpload(t *testing.T) {
@@ -702,10 +702,10 @@ func TestRealizeUpload(t *testing.T) {
 		},
 	}
 
-	server, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 		TempDir: t.TempDir(),
 		Options: Options{
-			Upload: uploadStore,
+			Writer: uploadStore,
 			Keyring: &Keyring{
 				Ed25519: []ed25519.PrivateKey{testKey},
 			},
@@ -720,10 +720,10 @@ func TestRealizeUpload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.writeTo(ctx, client, nil); err != nil {
+	if err := data.writeTo(ctx, server, nil); err != nil {
 		t.Fatal(err)
 	}
-	vars := runScriptTest(ctx, t, dir, client, data, nil)
+	vars := runScriptTest(ctx, t, dir, server, data, nil)
 
 	// Wait for uploads to finish.
 	if err := server.Drain(ctx); err != nil {

@@ -6,7 +6,10 @@ package backend_test
 import (
 	"bytes"
 	"context"
+	"io"
+	"net"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -77,26 +80,16 @@ func TestExport(t *testing.T) {
 		},
 	}
 
-	generateImport := func(dir zbstore.Directory) ([]*zbstore.Blob, []byte, error) {
+	readExportTestData := func(dir zbstore.Directory) (storetest.BlobSlice, error) {
 		ar, err := txtar.ParseFile(filepath.Join("testdata", "TestExport.txt"))
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		objects, _, err := storetest.TxtarObjects(dir, ar.Files)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		exportBuffer := new(bytes.Buffer)
-		exporter := zbstore.NewExportWriter(exportBuffer)
-		for _, obj := range objects {
-			if err := exporter.WriteObject(context.Background(), obj); err != nil {
-				return nil, nil, err
-			}
-		}
-		if err := exporter.Close(); err != nil {
-			return nil, nil, err
-		}
-		return objects, exportBuffer.Bytes(), nil
+		return objects, nil
 	}
 
 	for _, test := range tests {
@@ -105,21 +98,45 @@ func TestExport(t *testing.T) {
 				ctx := testcontext.New(t)
 
 				dir := backendtest.NewStoreDirectory(t)
-				records, importData, err := generateImport(dir)
+				records, err := readExportTestData(dir)
 				if err != nil {
 					t.Fatal(err)
 				}
 
-				_, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+				server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 					TempDir: t.TempDir(),
 				})
 				if err != nil {
 					t.Fatal(err)
 				}
 
-				// Import test data.
-				if err := client.StoreImport(ctx, bytes.NewReader(importData)); err != nil {
-					t.Fatal(err)
+				var wg sync.WaitGroup
+				defer wg.Wait()
+				client := zbstorerpc.NewClient(ctx, func(ctx context.Context) (io.ReadWriteCloser, error) {
+					serverConn, clientConn := net.Pipe()
+					wg.Go(func() {
+						var serverImporter struct {
+							*backend.Server
+							zbstorerpc.Importer
+						}
+						serverImporter.Server = server
+						serverImporter.Importer = &zbstore.BufferedImporter{
+							ObjectWriter: server,
+						}
+						zbstorerpc.Serve(ctx, serverConn, serverImporter)
+					})
+					return clientConn, nil
+				})
+				defer func() {
+					if err := client.Close(); err != nil {
+						t.Error("client.Close:", err)
+					}
+				}()
+
+				for _, record := range records {
+					if err := server.WriteObject(ctx, record); err != nil {
+						t.Fatal(err)
+					}
 				}
 
 				// Perform export.
@@ -134,18 +151,18 @@ func TestExport(t *testing.T) {
 				if err != nil {
 					t.Error(err)
 				}
-				receiver := new(storetest.BlobReceiver)
-				if err := zbstore.ReceiveExport(receiver, buf); err != nil {
+				var got storetest.BlobSlice
+				if err := got.StoreImport(ctx, buf); err != nil {
 					t.Error(err)
 				}
 
 				// Check contents of export.
-				want := make([]*zbstore.Blob, len(test.want))
+				want := make(storetest.BlobSlice, len(test.want))
 				for i, pathIndex := range test.want {
 					want[i] = records[pathIndex]
 				}
 				diff := cmp.Diff(
-					want, receiver.Blobs,
+					want, got,
 					cmpopts.EquateEmpty(),
 					storetest.TransformSortedSet[zbstore.Path](),
 				)
@@ -174,12 +191,12 @@ func TestExport(t *testing.T) {
 						dir = backendtest.NewStoreDirectory(t)
 						realDir = string(dir)
 					}
-					records, importData, err := generateImport(dir)
+					records, err := readExportTestData(dir)
 					if err != nil {
 						t.Fatal(err)
 					}
 
-					srv, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+					server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 						TempDir: t.TempDir(),
 						Options: backend.Options{
 							RealStoreDirectory: realDir,
@@ -189,35 +206,36 @@ func TestExport(t *testing.T) {
 						t.Fatal(err)
 					}
 
-					// Import test data.
-					if err := client.StoreImport(ctx, bytes.NewReader(importData)); err != nil {
-						t.Fatal(err)
+					for _, record := range records {
+						if err := server.WriteObject(ctx, record); err != nil {
+							t.Fatal(err)
+						}
 					}
 
 					// Perform export.
-					got := new(bytes.Buffer)
-					req := &zbstorerpc.ExportRequest{
-						Paths:             make([]zbstore.Path, len(test.paths)),
+					exportBuffer := new(bytes.Buffer)
+					paths := make(sets.Set[zbstore.Path], len(test.paths))
+					for _, pathIndex := range test.paths {
+						paths.Add(records[pathIndex].StorePath)
+					}
+					err = server.StoreExport(ctx, exportBuffer, paths, &zbstore.ExportOptions{
 						ExcludeReferences: test.excludeReferences,
-					}
-					for i, pathIndex := range test.paths {
-						req.Paths[i] = records[pathIndex].StorePath
-					}
-					if err := srv.Export(ctx, got, req); err != nil {
+					})
+					if err != nil {
 						t.Error("Export:", err)
 					}
 
 					// Check contents of export.
-					receiver := new(storetest.BlobReceiver)
-					if err := zbstore.ReceiveExport(receiver, got); err != nil {
+					var got storetest.BlobSlice
+					if err := got.StoreImport(ctx, exportBuffer); err != nil {
 						t.Error("Read export:", err)
 					}
-					want := make([]*zbstore.Blob, len(test.want))
+					want := make(storetest.BlobSlice, len(test.want))
 					for i, pathIndex := range test.want {
 						want[i] = records[pathIndex]
 					}
 					diff := cmp.Diff(
-						want, receiver.Blobs,
+						want, got,
 						cmpopts.EquateEmpty(),
 						storetest.TransformSortedSet[zbstore.Path](),
 					)

@@ -30,13 +30,13 @@ func TestPath(t *testing.T) {
 		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
-		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+		store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 			TempDir: t.TempDir(),
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		testStore := &testRPCStore{Client: store}
+		testStore := &testRPCStore{client: store}
 		eval, err := NewEval(&Options{
 			Store:          testStore,
 			StoreDirectory: storeDir,
@@ -90,13 +90,13 @@ func TestPath(t *testing.T) {
 		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
-		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+		store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 			TempDir: t.TempDir(),
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		testStore := &testRPCStore{Client: store}
+		testStore := &testRPCStore{client: store}
 		eval, err := NewEval(&Options{
 			Store:          testStore,
 			StoreDirectory: storeDir,
@@ -161,13 +161,13 @@ func TestPath(t *testing.T) {
 		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
-		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+		store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 			TempDir: t.TempDir(),
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		testStore := &testRPCStore{Client: store}
+		testStore := &testRPCStore{client: store}
 		eval, err := NewEval(&Options{
 			Store:          testStore,
 			StoreDirectory: storeDir,
@@ -211,14 +211,14 @@ func TestPath(t *testing.T) {
 		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
-		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+		store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 			TempDir: t.TempDir(),
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		eval, err := NewEval(&Options{
-			Store:          &testRPCStore{Client: store},
+			Store:          &testRPCStore{client: store},
 			StoreDirectory: storeDir,
 		})
 		if err != nil {
@@ -273,14 +273,14 @@ func TestPath(t *testing.T) {
 		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
-		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+		store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 			TempDir: t.TempDir(),
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		eval, err := NewEval(&Options{
-			Store:          &testRPCStore{Client: store},
+			Store:          &testRPCStore{client: store},
 			StoreDirectory: storeDir,
 		})
 		if err != nil {
@@ -327,14 +327,14 @@ func TestPath(t *testing.T) {
 		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
-		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+		store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 			TempDir: t.TempDir(),
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		eval, err := NewEval(&Options{
-			Store:          &testRPCStore{Client: store},
+			Store:          &testRPCStore{client: store},
 			StoreDirectory: storeDir,
 		})
 		if err != nil {
@@ -370,14 +370,14 @@ func TestPath(t *testing.T) {
 		ctx := testcontext.New(t)
 		storeDir := backendtest.NewStoreDirectory(t)
 
-		_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+		store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 			TempDir: t.TempDir(),
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		eval, err := NewEval(&Options{
-			Store:          &testRPCStore{Client: store},
+			Store:          &testRPCStore{client: store},
 			StoreDirectory: storeDir,
 		})
 		if err != nil {
@@ -420,13 +420,13 @@ func TestReadFile(t *testing.T) {
 	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	testStore := &testRPCStore{Client: store}
+	testStore := &testRPCStore{client: store}
 	eval, err := NewEval(&Options{
 		Store:          testStore,
 		StoreDirectory: storeDir,

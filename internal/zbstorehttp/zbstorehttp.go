@@ -228,12 +228,12 @@ func (s *Store) mergeRealizations(ctx context.Context, dst *zbstore.RealizationM
 	return nil
 }
 
-// PutRealizations uploads the realizations to the store.
-// PutRealizations attempts to send a PUT request to each "https://zb-build.dev/api/rel/realization" link
+// WriteRealizations uploads the realizations to the store.
+// WriteRealizations attempts to send a PUT request to each "https://zb-build.dev/api/rel/realization" link
 // from the discovery document in sequence until one succeeds.
 // Conditional requests are used to prevent lost concurrent updates,
 // as best as the server supports.
-func (s *Store) PutRealizations(ctx context.Context, realizations zbstore.RealizationMap) error {
+func (s *Store) WriteRealizations(ctx context.Context, realizations zbstore.RealizationMap) error {
 	if realizations.IsEmpty() {
 		return nil
 	}

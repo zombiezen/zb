@@ -75,6 +75,10 @@ type Options struct {
 	// DownloadBufferCreator is used to create buffers for unbounded downloads.
 	// If nil, then in-memory byte slices are used with reasonable limits.
 	DownloadBufferCreator bytebuffer.Creator
+	// ExportBufferCreator is used to buffer exports
+	// to stores that do not implement [zbstore.Importer].
+	// If nil, then in-memory byte slices are used with reasonable limits.
+	ExportBufferCreator bytebuffer.Creator
 }
 
 // Store is the set of store operations that [Eval] needs.
@@ -82,7 +86,7 @@ type Options struct {
 // TODO(#44): Embed [zbstore.WritableRandomAccessStore].
 type Store interface {
 	zbstore.Store
-	zbstore.Importer
+	zbstore.ObjectWriter
 
 	// FetchObjects gets information about existing objects
 	// and/or attempts to download objects from another source.
@@ -101,6 +105,7 @@ type Eval struct {
 	lookupEnv    func(ctx context.Context, key string) (string, bool)
 	httpClient   HTTPClient
 	downloadTemp bytebuffer.Creator
+	exportTemp   bytebuffer.Creator
 
 	baseImportContext context.Context
 	cancelImports     context.CancelFunc
@@ -123,6 +128,7 @@ func NewEval(opts *Options) (_ *Eval, err error) {
 		lookupEnv:    opts.LookupEnv,
 		httpClient:   opts.HTTPClient,
 		downloadTemp: opts.DownloadBufferCreator,
+		exportTemp:   opts.ExportBufferCreator,
 	}
 	if eval.lookupEnv == nil {
 		eval.lookupEnv = func(ctx context.Context, key string) (string, bool) {
@@ -134,6 +140,9 @@ func NewEval(opts *Options) (_ *Eval, err error) {
 	}
 	if eval.downloadTemp == nil {
 		eval.downloadTemp = bytebuffer.BufferCreator{}
+	}
+	if eval.exportTemp == nil {
+		eval.exportTemp = bytebuffer.BufferCreator{}
 	}
 
 	var schema sqlitemigration.Schema

@@ -36,6 +36,7 @@ import (
 	"zombiezen.com/go/bass/runhttp"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/log/zstdlog"
+	"zombiezen.com/go/nix"
 )
 
 const contentAddressTempFilePattern = "zb-ca-*"
@@ -164,7 +165,7 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig, drain drainSign
 		BuildLogRetention:           c.BuildLogRetention,
 		Keyring:                     keyring,
 		Fallback:                    fallbackStore,
-		Upload:                      uploadHTTPStore,
+		Writer:                      uploadHTTPStore,
 	})
 	defer func() {
 		if err := backendServer.Close(); err != nil {
@@ -288,23 +289,36 @@ func (c *serveCommand) listenRPC(ctx context.Context, server *backend.Server, g 
 		}
 
 		grp.Go(func() {
-			recv := server.NewNARReceiver(ctx, bytebuffer.TempFileCreator{
-				Pattern: "zb-serve-receive-*.nar",
-			})
-			defer recv.Cleanup(ctx)
-
 			var serverImporter struct {
 				*backend.Server
 				zbstorerpc.Importer
 			}
 			serverImporter.Server = server
-			serverImporter.Importer = zbstorerpc.NewReceiverImporter(recv)
+			serverImporter.Importer = &zbstore.BufferedImporter{
+				// Don't close the connection if an object cannot be written.
+				ObjectWriter: ignoreErrorsObjectWriter{server},
+				HashType:     nix.SHA256,
+				BufferCreator: bytebuffer.TempFileCreator{
+					Pattern: "zb-serve-receive-*.nar",
+				},
+			}
 			err := zbstorerpc.Serve(ctx, conn, serverImporter)
 			if err != nil {
 				log.Debugf(ctx, "Disconnecting from %v: %v", conn.RemoteAddr(), err)
 			}
 		})
 	}
+}
+
+type ignoreErrorsObjectWriter struct {
+	objectWriter zbstore.ObjectWriter
+}
+
+func (w ignoreErrorsObjectWriter) WriteObject(ctx context.Context, object zbstore.Object) error {
+	if err := w.objectWriter.WriteObject(ctx, object); err != nil {
+		log.Warnf(ctx, "%v", err)
+	}
+	return nil
 }
 
 func ensureStoreDirectory(path string, gid int) error {

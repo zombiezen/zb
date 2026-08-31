@@ -16,14 +16,14 @@ func TestLazy(t *testing.T) {
 	ctx := testcontext.New(t)
 	storeDir := backendtest.NewStoreDirectory(t)
 
-	_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+	store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
 		TempDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	eval, err := NewEval(&Options{
-		Store:          &testRPCStore{Client: store},
+		Store:          &testRPCStore{client: store},
 		StoreDirectory: storeDir,
 	})
 	if err != nil {

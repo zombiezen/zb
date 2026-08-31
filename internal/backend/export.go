@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"slices"
 
 	jsonv2 "github.com/go-json-experiment/json"
@@ -19,47 +20,21 @@ import (
 	"zombiezen.com/go/nix/nar"
 )
 
-// Export exports the store objects according to the request
-// in `nix-store --export` format to dst.
-func (s *Server) Export(ctx context.Context, dst io.Writer, req *zbstorerpc.ExportRequest) error {
-	e := zbstore.NewExportWriter(dst)
-
-	var manifest []*zbstore.ExportTrailer
-	var err error
-	if req.ExcludeReferences {
-		manifest, err = s.fetchInfoForExport(ctx, req.Paths)
-	} else {
-		manifest, err = s.findExportClosure(ctx, req.Paths)
-	}
-	if err != nil {
-		return fmt.Errorf("export %s: %v", joinStrings(req.Paths, ", "), err)
-	}
-
-	for _, object := range manifest {
-		if err := nar.DumpPath(e, s.realPath(object.StorePath)); err != nil {
-			return fmt.Errorf("export %s: %v", object.StorePath, err)
-		}
-		if err := e.Trailer(object); err != nil {
-			return fmt.Errorf("export %s: %v", object.StorePath, err)
-		}
-	}
-	if err := e.Close(); err != nil {
-		return fmt.Errorf("export %s: %v", joinStrings(req.Paths, ", "), err)
-	}
-
-	return nil
-}
-
 func (s *Server) export(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Response, error) {
 	args := new(zbstorerpc.ExportRequest)
 	if err := jsonv2.Unmarshal(req.Params, args); err != nil {
 		return nil, jsonrpc.Error(jsonrpc.InvalidParams, err)
 	}
 
+	// Conceptually, same as a [zbstore.Copy],
+	// but we only want to return an error if [*Server.StoreExport] returns an error.
+	// [zbstore.Copy] also checks for existence, which isn't an error for an export.
 	pr, pw := io.Pipe()
 	grp, ctx := errgroup.WithContext(ctx)
 	grp.Go(func() error {
-		err := s.Export(ctx, pw, args)
+		err := s.StoreExport(ctx, pw, sets.Collect(slices.Values(args.Paths)), &zbstore.ExportOptions{
+			ExcludeReferences: args.ExcludeReferences,
+		})
 		pw.CloseWithError(err)
 		return err
 	})
@@ -73,17 +48,50 @@ func (s *Server) export(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Res
 	return nil, grp.Wait()
 }
 
-// fetchInfoForExport generates export trailers for the given paths.
-func (s *Server) fetchInfoForExport(ctx context.Context, paths []zbstore.Path) ([]*zbstore.ExportTrailer, error) {
-	if len(paths) == 0 {
+type dbStore struct {
+	dir     zbstore.Directory
+	realDir string
+	db      connectionGetter
+}
+
+func (s *Server) dbStore() *dbStore {
+	return &dbStore{
+		dir:     s.dir,
+		realDir: s.realDir,
+		db:      s.db,
+	}
+}
+
+func (store *dbStore) Object(ctx context.Context, path zbstore.Path) (zbstore.Object, error) {
+	objects, err := store.ObjectBatch(ctx, sets.New(path))
+	if err != nil {
+		return nil, fmt.Errorf("get %s: %w", path, err)
+	}
+	i := slices.IndexFunc(objects, func(object zbstore.Object) bool {
+		return object.Info().StorePath == path
+	})
+	if i == -1 {
+		return nil, fmt.Errorf("get %s: %w", path, zbstore.ErrNotFound)
+	}
+	return objects[i], nil
+}
+
+func (store *dbStore) ObjectBatch(ctx context.Context, paths sets.Set[zbstore.Path]) ([]zbstore.Object, error) {
+	n := 0
+	for path := range paths.All() {
+		if path.Dir() == store.dir {
+			n++
+		}
+	}
+	if n == 0 {
 		return nil, nil
 	}
 
-	conn, err := s.db.Get(ctx)
+	conn, err := store.db.Get(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer s.db.Put(conn)
+	defer store.db.Put(conn)
 
 	rollback, err := readonlySavepoint(conn)
 	if err != nil {
@@ -91,33 +99,46 @@ func (s *Server) fetchInfoForExport(ctx context.Context, paths []zbstore.Path) (
 	}
 	defer rollback()
 
-	var result []*zbstore.ExportTrailer
-	for _, path := range paths {
+	result := make([]zbstore.Object, 0, n)
+	for path := range paths.All() {
+		if path.Dir() != store.dir {
+			continue
+		}
 		info, err := pathInfo(conn, path)
-		if err == nil {
-			result = append(result, info.ExportTrailer())
-		} else if err != nil && !errors.Is(err, zbstore.ErrNotFound) {
+		switch {
+		case err == nil:
+			result = append(result, &filesystemObject{
+				path: filepath.Join(store.realDir, path.Base()),
+				info: *info,
+			})
+		case !errors.Is(err, zbstore.ErrNotFound):
 			return nil, err
 		}
 	}
 	return result, nil
 }
 
-// findExportClosure returns a list of export trailers
-// for all the store objects that are transitively referenced by the given paths.
+// closure returns the store objects that are transitively referenced by the given paths.
 // The list is in topological order,
 // so each store object in the list will only reference itself
 // or store objects that come before it in the list.
-func (s *Server) findExportClosure(ctx context.Context, paths []zbstore.Path) ([]*zbstore.ExportTrailer, error) {
-	if len(paths) == 0 {
+func (store *dbStore) closure(ctx context.Context, paths sets.Set[zbstore.Path]) ([]zbstore.Object, error) {
+	hasPathsInDir := false
+	for path := range paths.All() {
+		if path.Dir() == store.dir {
+			hasPathsInDir = true
+			break
+		}
+	}
+	if !hasPathsInDir {
 		return nil, nil
 	}
 
-	conn, err := s.db.Get(ctx)
+	conn, err := store.db.Get(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer s.db.Put(conn)
+	defer store.db.Put(conn)
 
 	rollback, err := readonlySavepoint(conn)
 	if err != nil {
@@ -125,13 +146,17 @@ func (s *Server) findExportClosure(ctx context.Context, paths []zbstore.Path) ([
 	}
 	defer rollback()
 
-	var result []*zbstore.ExportTrailer
-	hasPath := func(s []*zbstore.ExportTrailer, path zbstore.Path) bool {
-		return slices.ContainsFunc(s, func(t *zbstore.ExportTrailer) bool {
-			return t.StorePath == path
+	var result []zbstore.Object
+	hasPath := func(s []zbstore.Object, path zbstore.Path) bool {
+		return slices.ContainsFunc(s, func(obj zbstore.Object) bool {
+			return obj.Info().StorePath == path
 		})
 	}
-	for _, path := range paths {
+	for path := range paths {
+		if path.Dir() != store.dir {
+			continue
+		}
+
 		var infoError error
 		err := closurePaths(conn, pathAndEquivalenceClass{path: path}, func(pe pathAndEquivalenceClass) bool {
 			if hasPath(result, pe.path) {
@@ -144,7 +169,10 @@ func (s *Server) findExportClosure(ctx context.Context, paths []zbstore.Path) ([
 				// because it means we have an inconsistent store.
 				return false
 			}
-			result = append(result, info.ExportTrailer())
+			result = append(result, &filesystemObject{
+				path: filepath.Join(store.realDir, pe.path.Base()),
+				info: *info,
+			})
 			return true
 		})
 		if infoError != nil {
@@ -158,8 +186,8 @@ func (s *Server) findExportClosure(ctx context.Context, paths []zbstore.Path) ([
 	// Topologically sort new closure.
 	err = sortByReferences(
 		result,
-		func(t *zbstore.ExportTrailer) zbstore.Path { return t.StorePath },
-		func(t *zbstore.ExportTrailer) sets.Sorted[zbstore.Path] { return t.References },
+		func(t zbstore.Object) zbstore.Path { return t.Info().StorePath },
+		func(t zbstore.Object) sets.Sorted[zbstore.Path] { return t.Info().References },
 		false,
 	)
 	if err != nil {
@@ -167,4 +195,44 @@ func (s *Server) findExportClosure(ctx context.Context, paths []zbstore.Path) ([
 	}
 
 	return result, nil
+}
+
+// Export exports the store objects according to the request
+// in `nix-store --export` format to dst.
+func (store *dbStore) StoreExport(ctx context.Context, dst io.Writer, paths sets.Set[zbstore.Path], opts *zbstore.ExportOptions) error {
+	var got []zbstore.Object
+	var err error
+	if opts != nil && opts.ExcludeReferences {
+		got, err = store.ObjectBatch(ctx, paths)
+	} else {
+		got, err = store.closure(ctx, paths)
+	}
+	if err != nil {
+		return fmt.Errorf("export %s: %v", joinStrings(paths.All(), ", "), err)
+	}
+
+	e := zbstore.NewExportWriter(dst)
+	for _, object := range got {
+		if err := e.WriteObject(ctx, object); err != nil {
+			return err
+		}
+	}
+	if err := e.Close(); err != nil {
+		return fmt.Errorf("export %s: %v", joinStrings(paths.All(), ", "), err)
+	}
+
+	return nil
+}
+
+type filesystemObject struct {
+	path string
+	info zbstore.ObjectInfo
+}
+
+func (obj *filesystemObject) Info() *zbstore.ObjectInfo {
+	return &obj.info
+}
+
+func (obj *filesystemObject) WriteNAR(ctx context.Context, w io.Writer) error {
+	return nar.DumpPath(w, obj.path)
 }

@@ -17,7 +17,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"slices"
 	"sync"
 
 	jsonv2 "github.com/go-json-experiment/json"
@@ -98,31 +97,6 @@ func ObjectBatch(ctx context.Context, store Store, storePaths sets.Set[Path], ma
 
 	err := grp.Wait()
 	return result, err
-}
-
-// ObjectClosure retrieves zero or more store objects
-// and their transitive references.
-// Object in the returned slice will appear after their references.
-//
-// If the store implements [BatchStore], then the ObjectBatch method will be used.
-// Otherwise, the objects will be fetched using many calls to [Store.Object]
-// with at most maxConcurrency called concurrently.
-func ObjectClosure(ctx context.Context, store Store, storePaths sets.Set[Path], maxConcurrency int) ([]Object, error) {
-	if maxConcurrency < 1 {
-		return nil, errors.New("fetch zb store objects: non-positive concurrency")
-	}
-	if len(storePaths) == 0 {
-		return nil, nil
-	}
-	objects, err := orderedObjectBatch(ctx, store, slices.Values(slices.Sorted(storePaths.All())), maxConcurrency)
-	if err != nil {
-		return nil, err
-	}
-	objects, err = expandClosure(ctx, store, objects, maxConcurrency)
-	if err != nil {
-		return nil, err
-	}
-	return objects, nil
 }
 
 // MarshalHashJSONTo is a [jsonv2.MarshalToFunc] for [nix.Hash]

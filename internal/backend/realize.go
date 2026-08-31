@@ -77,7 +77,7 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 	if err != nil {
 		return nil, err
 	}
-	drvPathList := joinStrings(drvPaths, ", ")
+	drvPathList := joinStrings(slices.Values(drvPaths), ", ")
 	log.Infof(ctx, "New build %v: %s", buildID, drvPathList)
 
 	drvCache, err := s.readDerivationClosure(ctx, drvPaths)
@@ -951,10 +951,21 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 		outputs.Realizations[outputName] = []*zbstore.Realization{r}
 	}
 
-	if b.server.upload != nil {
+	if b.server.writer != nil {
 		srv := b.server
+		paths := make(sets.Set[zbstore.Path])
+		for _, info := range objectsToUpload {
+			paths.Add(info.StorePath)
+		}
 		srv.detachFromBuild(ctx, func(ctx context.Context) {
-			srv.uploadClosure(ctx, slices.Values(objectsToUpload))
+			src := &dbStore{
+				dir:     srv.dir,
+				realDir: srv.realDir,
+				db:      srv.db,
+			}
+			if err := zbstore.Copy(ctx, srv.writer, src, paths, nil); err != nil {
+				log.Warnf(ctx, "%v", err)
+			}
 		})
 	}
 
@@ -1614,40 +1625,26 @@ func (b *builder) postprocessFixedOutput(ctx context.Context, conn *sqlite.Conn,
 	log.Debugf(ctx, "Verifying fixed output %s...", outputPath)
 
 	realOutputPath := b.server.realPath(outputPath)
-	h := nix.NewHasher(nix.SHA256)
-	pr, pw := io.Pipe()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		if err := nar.DumpPath(io.MultiWriter(h, pw), realOutputPath); err != nil {
-			pw.CloseWithError(err)
-		} else {
-			pw.Close()
-		}
-	}()
-	defer func() {
-		pr.Close()
-		<-done
-	}()
-
-	obj := &pipeObject{
-		info: zbstore.ObjectInfo{
-			StorePath:      outputPath,
-			ContentAddress: ca,
-		},
-		narContent: pr,
+	info = &zbstore.ObjectInfo{
+		StorePath:      outputPath,
+		ContentAddress: ca,
 	}
-	narSize, err := zbstore.VerifyObject(ctx, io.Discard, obj, &zbstore.ContentAddressOptions{
+	hasher := &objectHasher{
+		object: &filesystemObject{
+			path: realOutputPath,
+			info: *info,
+		},
+	}
+	narSize, err := zbstore.VerifyObject(ctx, io.Discard, hasher, &zbstore.ContentAddressOptions{
 		CreateTemp: b.server.caCreateTemp,
 		Log:        func(msg string) { log.Debugf(ctx, "%s", msg) },
 	})
 	if err != nil {
 		return nil, err
 	}
-
-	info = new(obj.info)
 	info.NARSize = narSize
-	info.NARHash = h.SumHash()
+	info.NARHash = hasher.narHash
+
 	err = func() (err error) {
 		endFn, err := sqlitex.ImmediateTransaction(conn)
 		if err != nil {
@@ -1656,12 +1653,10 @@ func (b *builder) postprocessFixedOutput(ctx context.Context, conn *sqlite.Conn,
 		defer endFn(&err)
 		return insertObject(ctx, conn, info)
 	}()
-	if err != nil {
-		err = fmt.Errorf("post-process %v: %v", outputPath, err)
-	}
-
 	freeze(ctx, realOutputPath)
-
+	if err != nil {
+		return nil, fmt.Errorf("post-process %v: %v", outputPath, err)
+	}
 	return info, nil
 }
 
@@ -1912,10 +1907,12 @@ func (b *builder) recordRealizations(ctx context.Context, conn *sqlite.Conn, bui
 		log.Debugf(ctx, "Recording realizations for %v: %s", outputs.DerivationHash, formatOutputPaths(outputPaths))
 	}
 
-	if b.server.upload != nil {
+	if b.server.writer != nil {
 		srv := b.server
 		srv.detachFromBuild(ctx, func(ctx context.Context) {
-			srv.uploadRealizations(ctx, outputs)
+			if err := srv.writer.WriteRealizations(ctx, outputs); err != nil {
+				log.Warnf(ctx, "%v", err)
+			}
 		})
 	}
 
@@ -2038,26 +2035,34 @@ func tempPath(ref zbstore.OutputReference) (zbstore.Path, error) {
 	return p, nil
 }
 
-func joinStrings[T ~string, S ~[]T](elems S, sep string) string {
-	switch len(elems) {
-	case 0:
+func joinStrings[T ~string](elems iter.Seq[T], sep string) string {
+	next, stop := iter.Pull(elems)
+	defer stop()
+
+	s1, ok := next()
+	if !ok {
 		return ""
-	case 1:
-		return string(elems[0])
+	}
+	s2, ok := next()
+	if !ok {
+		return string(s1)
 	}
 
-	var n int
-	if len(sep) > 0 {
-		n += len(sep) * (len(elems) - 1)
-	}
-	for _, elem := range elems {
-		n += len(elem)
+	n := -len(sep)
+	for elem := range elems {
+		n += len(elem) + len(sep)
 	}
 
 	var b strings.Builder
 	b.Grow(n)
-	b.WriteString(string(elems[0]))
-	for _, s := range elems[1:] {
+	b.WriteString(string(s1))
+	b.WriteString(sep)
+	b.WriteString(string(s2))
+	for {
+		s, ok := next()
+		if !ok {
+			break
+		}
 		b.WriteString(sep)
 		b.WriteString(string(s))
 	}

@@ -10,7 +10,6 @@ import (
 	"io"
 	"sync"
 
-	"zb.256lights.llc/pkg/internal/multierror"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/nix"
@@ -64,12 +63,52 @@ func (store *Store) ObjectBatch(ctx context.Context, storePaths sets.Set[zbstore
 	return objects, nil
 }
 
+// WriteObject implements [zbstore.ObjectWriter] by adding the object to the store.
+func (store *Store) WriteObject(ctx context.Context, obj zbstore.Object) error {
+	info := obj.Info()
+	content := new(bytes.Buffer)
+	var w io.Writer = content
+	hash := info.NARHash
+	var hasher *nix.Hasher
+	if hash.IsZero() {
+		hasher = nix.NewHasher(nix.SHA256)
+		w = io.MultiWriter(hasher, content)
+	}
+	if _, err := zbstore.VerifyObject(ctx, w, obj, nil); err != nil {
+		return err
+	}
+	if hasher != nil {
+		hash = hasher.SumHash()
+	}
+	store.addBlobNoVerify(&zbstore.Blob{
+		NAR:           content.Bytes(),
+		NARHash:       hash,
+		ExportTrailer: *info.ExportTrailer().Clone(),
+	})
+	return nil
+}
+
+func (store *Store) addBlob(blob *zbstore.Blob) {
+	if _, err := zbstore.VerifyObject(context.Background(), io.Discard, blob, nil); err == nil {
+		store.addBlobNoVerify(blob)
+	}
+}
+
+func (store *Store) addBlobNoVerify(blob *zbstore.Blob) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.objects[blob.StorePath] != nil {
+		return
+	}
+	if store.objects == nil {
+		store.objects = make(map[zbstore.Path]*zbstore.Blob)
+	}
+	store.objects[blob.StorePath] = blob
+}
+
 // StoreImport implements [zbstore.Importer] by adding the objects to the store.
 func (store *Store) StoreImport(ctx context.Context, r io.Reader) error {
-	recv := &storeReceiver{store: store}
-	err := zbstore.ReceiveExport(recv, r)
-	recv.errors.Add(err)
-	return recv.errors.Error()
+	return addBlobs(ctx, store, r)
 }
 
 // FetchRealizations implements [zbstore.RealizationFetcher].
@@ -90,7 +129,7 @@ func (store *Store) FetchRealizations(ctx context.Context, derivationHash nix.Ha
 				}
 				realizationsCopy := make([]*zbstore.Realization, 0, len(realizations))
 				for _, r := range realizations {
-					realizationsCopy = append(realizationsCopy, cloneRealization(r))
+					realizationsCopy = append(realizationsCopy, r.Clone())
 				}
 				result.Realizations[outputName] = realizationsCopy
 			}
@@ -99,85 +138,22 @@ func (store *Store) FetchRealizations(ctx context.Context, derivationHash nix.Ha
 	return result, nil
 }
 
-// AddRealization adds the given realization to the store.
-func (store *Store) AddRealization(ref zbstore.RealizationOutputReference, r *zbstore.Realization) {
+// WriteRealizations adds the given realizations to the store.
+func (store *Store) WriteRealizations(ctx context.Context, realizations zbstore.RealizationMap) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
 	if store.realizations == nil {
 		store.realizations = make(map[string]map[string][]*zbstore.Realization)
 	}
-	key := ref.DerivationHash.SRI()
+	key := realizations.DerivationHash.SRI()
 	m := store.realizations[key]
 	if m == nil {
 		m = make(map[string][]*zbstore.Realization)
 		store.realizations[key] = m
 	}
-	m[ref.OutputName] = append(m[ref.OutputName], cloneRealization(r))
-}
-
-type storeReceiver struct {
-	store  *Store
-	buf    bytes.Buffer
-	errors multierror.Collector
-}
-
-func (s *storeReceiver) Write(p []byte) (n int, err error) {
-	return s.buf.Write(p)
-}
-
-func (s *storeReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
-	obj := &zbstore.Blob{
-		NAR:           s.buf.Bytes(),
-		ExportTrailer: *trailer,
-	}
-	if _, err := zbstore.VerifyObject(context.Background(), io.Discard, obj, nil); err != nil {
-		s.errors.Add(err)
-		return
-	}
-
-	s.store.mu.Lock()
-	if s.store.objects[obj.StorePath] == nil {
-		if s.store.objects == nil {
-			s.store.objects = make(map[zbstore.Path]*zbstore.Blob)
-		}
-		obj.NAR = bytes.Clone(obj.NAR)
-		obj.ExportTrailer = *cloneExportTrailer(&obj.ExportTrailer)
-		s.store.objects[obj.StorePath] = obj
-	}
-	s.store.mu.Unlock()
-
-	s.buf.Reset()
-}
-
-func cloneExportTrailer(trailer *zbstore.ExportTrailer) *zbstore.ExportTrailer {
-	trailer = new(*trailer)
-	trailer.References = *trailer.References.Clone()
-	return trailer
-}
-
-func cloneRealization(r *zbstore.Realization) *zbstore.Realization {
-	rcopy := &zbstore.Realization{
-		OutputPath: r.OutputPath,
-		Signatures: make([]*zbstore.RealizationSignature, 0, len(r.Signatures)),
-	}
-	if len(r.ReferenceClasses) > 0 {
-		rcopy.ReferenceClasses = make([]*zbstore.ReferenceClass, 0, len(r.ReferenceClasses))
-		for _, rc := range r.ReferenceClasses {
-			rcopy.ReferenceClasses = append(rcopy.ReferenceClasses, new(*rc))
-		}
-	}
-	if len(r.Signatures) > 0 {
-		rcopy.Signatures = make([]*zbstore.RealizationSignature, 0, len(r.Signatures))
-		for _, sig := range r.Signatures {
-			rcopy.Signatures = append(rcopy.Signatures, &zbstore.RealizationSignature{
-				PublicKey: zbstore.RealizationPublicKey{
-					Format: sig.PublicKey.Format,
-					Data:   bytes.Clone(sig.PublicKey.Data),
-				},
-				Signature: bytes.Clone(sig.Signature),
-			})
-		}
-	}
-	return rcopy
+	return (&zbstore.RealizationMap{
+		DerivationHash: realizations.DerivationHash,
+		Realizations:   m,
+	}).Merge(realizations)
 }

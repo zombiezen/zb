@@ -38,65 +38,6 @@ import (
 	"zombiezen.com/go/nix"
 )
 
-func TestImport(t *testing.T) {
-	t.Parallel()
-
-	t.Run("ActualDir", func(t *testing.T) {
-		t.Parallel()
-
-		ctx := testcontext.New(t)
-		dir := backendtest.NewStoreDirectory(t)
-
-		server, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
-			TempDir: t.TempDir(),
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		data, err := readTestData(dir, "TestImport.txt", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := data.writeTo(ctx, client, nil); err != nil {
-			t.Fatal(err)
-		}
-		runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
-			server: server,
-		})
-	})
-
-	t.Run("MappedDir", func(t *testing.T) {
-		t.Parallel()
-
-		ctx := testcontext.New(t)
-		realStoreDir := t.TempDir()
-		dir := zbstore.DefaultDirectory()
-
-		server, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
-			TempDir: t.TempDir(),
-			Options: Options{
-				RealStoreDirectory: realStoreDir,
-			},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		data, err := readTestData(dir, "TestImport.txt", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := data.writeTo(ctx, client, nil); err != nil {
-			t.Fatal(err)
-		}
-		runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
-			server:        server,
-			realDirectory: realStoreDir,
-		})
-	})
-}
-
 func TestFetch(t *testing.T) {
 	t.Parallel()
 
@@ -124,7 +65,7 @@ func TestFetch(t *testing.T) {
 			realStoreDir := t.TempDir()
 
 			fallback := new(storetest.Store)
-			server, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+			server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 				TempDir: t.TempDir(),
 				Options: Options{
 					RealStoreDirectory: realStoreDir,
@@ -139,11 +80,10 @@ func TestFetch(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := data.writeTo(ctx, client, fallback); err != nil {
+			if err := data.writeTo(ctx, server, fallback); err != nil {
 				t.Fatal(err)
 			}
-			runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
-				server:        server,
+			runScriptTest(ctx, t, dir, server, data, &scriptTestOptions{
 				realDirectory: realStoreDir,
 				fallback:      fallback,
 			})
@@ -177,7 +117,7 @@ func TestDelete(t *testing.T) {
 			dir := zbstore.DefaultDirectory()
 			realStoreDir := t.TempDir()
 
-			server, client, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+			server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
 				TempDir: t.TempDir(),
 				Options: Options{
 					RealStoreDirectory: realStoreDir,
@@ -191,11 +131,10 @@ func TestDelete(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := data.writeTo(ctx, client, nil); err != nil {
+			if err := data.writeTo(ctx, server, nil); err != nil {
 				t.Fatal(err)
 			}
-			runScriptTest(ctx, t, dir, client, data, &scriptTestOptions{
-				server:        server,
+			runScriptTest(ctx, t, dir, server, data, &scriptTestOptions{
 				realDirectory: realStoreDir,
 			})
 		})
@@ -282,41 +221,25 @@ func readTestData(dir zbstore.Directory, name string, fileSubstitutions map[stri
 	}, nil
 }
 
-func (data *testDataArchive) writeTo(ctx context.Context, client, fallback zbstore.Importer) error {
-	exportBuffer := new(bytes.Buffer)
-	exporter := zbstore.NewExportWriter(exportBuffer)
+func (data *testDataArchive) writeTo(ctx context.Context, backend, fallback zbstore.ObjectWriter) error {
 	for _, obj := range data.objects {
 		if data.backendObjects.Has(obj.StorePath) {
-			if err := exporter.WriteObject(ctx, obj); err != nil {
+			if err := backend.WriteObject(ctx, obj); err != nil {
 				return err
 			}
 		}
-	}
-	if err := exporter.Close(); err != nil {
-		return err
-	}
-	if err := client.StoreImport(ctx, exportBuffer); err != nil {
-		return err
 	}
 
 	if data.fallbackObjects.Len() > 0 {
 		if fallback == nil {
 			return fmt.Errorf("test file contains [fallback] objects, but no fallback provided")
 		}
-		exportBuffer.Reset()
-		exporter := zbstore.NewExportWriter(exportBuffer)
 		for _, obj := range data.objects {
 			if data.fallbackObjects.Has(obj.StorePath) {
-				if err := exporter.WriteObject(ctx, obj); err != nil {
+				if err := fallback.WriteObject(ctx, obj); err != nil {
 					return err
 				}
 			}
-		}
-		if err := exporter.Close(); err != nil {
-			return err
-		}
-		if err := fallback.StoreImport(ctx, exportBuffer); err != nil {
-			return err
 		}
 	}
 
@@ -350,19 +273,20 @@ func reverseLookup[K any, V comparable](m iter.Seq2[K, V], want V) (K, bool) {
 
 // scriptTestOptions is the set of optional arguments to [runScripTest].
 type scriptTestOptions struct {
-	// server is only set for tests that need to access server methods.
-	server *Server
 	// realDirectory is the path to the store's actual directory.
 	realDirectory string
 	// fallback is the fallback store that the server is configured to read from.
-	fallback *storetest.Store
+	fallback interface {
+		zbstore.ObjectWriter
+		realizationFetchWriter
+	}
 	// initialEnv is a map of any extra environment variables to set in the script to start.
 	initialEnv map[string]string
 }
 
 // runScriptTest runs a backend script test from a testdata file.
 // See testdata/README.md for documentation.
-func runScriptTest(ctx context.Context, tb testing.TB, dir zbstore.Directory, client *zbstorerpc.Client, data *testDataArchive, opts *scriptTestOptions) (env map[string]string) {
+func runScriptTest(ctx context.Context, tb testing.TB, dir zbstore.Directory, server *Server, data *testDataArchive, opts *scriptTestOptions) (env map[string]string) {
 	tb.Helper()
 
 	if opts == nil {
@@ -386,8 +310,7 @@ func runScriptTest(ctx context.Context, tb testing.TB, dir zbstore.Directory, cl
 	sc := &storeCommands{
 		tb:         tb,
 		directory:  dir,
-		server:     opts.server,
-		client:     client,
+		server:     server,
 		allObjects: data.objects,
 		rewrites:   data.rewrites,
 		fallback:   opts.fallback,
@@ -462,14 +385,22 @@ func readCommand() script.Cmd {
 	)
 }
 
+type realizationFetchWriter interface {
+	zbstore.RealizationFetcher
+
+	// WriteRealizations stores [zbstore.RealizationMap] values.
+	// If a Writer receives a [zbstore.Realization] identical to one it already has,
+	// it should ignore the new realization and it should not return an error.
+	WriteRealizations(ctx context.Context, realizations zbstore.RealizationMap) error
+}
+
 type storeCommands struct {
 	tb         testing.TB
 	directory  zbstore.Directory
 	server     *Server
-	client     *zbstorerpc.Client
 	allObjects zbstore.Store
 	rewrites   map[string]zbstore.Path
-	fallback   *storetest.Store
+	fallback   realizationFetchWriter
 }
 
 func (sc *storeCommands) addTo(cmds map[string]script.Cmd) {
@@ -481,9 +412,7 @@ func (sc *storeCommands) addTo(cmds map[string]script.Cmd) {
 	cmds["realize"] = sc.realize()
 	cmds["fetch"] = sc.fetch()
 	cmds["write-realization"] = sc.writeRealization()
-	if sc.server != nil {
-		cmds["delete"] = sc.delete()
-	}
+	cmds["delete"] = sc.delete()
 }
 
 func (sc *storeCommands) newStoreReplacer() *strings.Replacer {
@@ -658,7 +587,7 @@ func (sc *storeCommands) cmpinfo() script.Cmd {
 					continue
 				}
 				var info zbstorerpc.InfoResponse
-				err = jsonrpc.Do(ctx, sc.client, zbstorerpc.InfoMethod, &info, &zbstorerpc.InfoRequest{
+				err = jsonrpc.Do(ctx, sc.server, zbstorerpc.InfoMethod, &info, &zbstorerpc.InfoRequest{
 					Path: path,
 				})
 				if err != nil {
@@ -719,7 +648,7 @@ func (sc *storeCommands) runRealize(state *script.State, args ...string) (script
 	}
 
 	realizeResponse := new(zbstorerpc.RealizeResponse)
-	err := jsonrpc.Do(ctx, sc.client, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
+	err := jsonrpc.Do(ctx, sc.server, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
 		DrvPaths: drvPaths,
 		Reuse:    &zbstorerpc.ReusePolicy{All: !clean},
 	})
@@ -731,7 +660,7 @@ func (sc *storeCommands) runRealize(state *script.State, args ...string) (script
 	}
 
 	return func(state *script.State) (stdout string, stderr string, err error) {
-		got, err := backendtest.WaitForBuild(ctx, sc.client, realizeResponse.BuildID)
+		got, err := backendtest.WaitForBuild(ctx, sc.server, realizeResponse.BuildID)
 		if err != nil {
 			return "", "", err
 		}
@@ -750,7 +679,7 @@ func (sc *storeCommands) runRealize(state *script.State, args ...string) (script
 		for _, result := range got.Results {
 			var logFile txtar.File
 			var err error
-			logFile.Data, err = backendtest.ReadLog(ctx, sc.client, realizeResponse.BuildID, result.DrvPath)
+			logFile.Data, err = backendtest.ReadLog(ctx, sc.server, realizeResponse.BuildID, result.DrvPath)
 			if err != nil {
 				state.Logf("%v", err)
 				continue
@@ -825,7 +754,15 @@ func (sc *storeCommands) writeRealization() script.Cmd {
 					}
 				}
 			}
-			sc.fallback.AddRealization(realizationRef, realization)
+			err = sc.fallback.WriteRealizations(ctx, zbstore.RealizationMap{
+				DerivationHash: drvHash,
+				Realizations: map[string][]*zbstore.Realization{
+					ref.OutputName: []*zbstore.Realization{realization},
+				},
+			})
+			if err != nil {
+				return nil, err
+			}
 			state.Logf("Wrote realization %v → %s to fallback", realizationRef, outputPath)
 			return nil, nil
 		},
@@ -858,7 +795,7 @@ func (sc *storeCommands) fetch() script.Cmd {
 			}
 
 			response := new(zbstorerpc.FetchResponse)
-			err := jsonrpc.Do(ctx, sc.client, zbstorerpc.FetchMethod, response, &zbstorerpc.FetchRequest{
+			err := jsonrpc.Do(ctx, sc.server, zbstorerpc.FetchMethod, response, &zbstorerpc.FetchRequest{
 				Paths: paths,
 			})
 			if err != nil {

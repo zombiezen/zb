@@ -4,14 +4,16 @@
 package zbstore
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"iter"
 	"slices"
 
+	"golang.org/x/sync/errgroup"
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/sets"
 )
 
@@ -22,7 +24,7 @@ const (
 )
 
 // An Exporter is a [Store] that can efficiently export objects.
-// The [Export] function will use this interface if available.
+// The [Copy] function will use this interface if available.
 // StoreExport must ignore paths not present in the store.
 //
 // StoreExport must be safe to call concurrently from multiple goroutines.
@@ -44,50 +46,102 @@ type ExportOptions struct {
 	MaxConcurrency int
 }
 
-// Export writes the store objects named by paths
+// Copy copies a set of [Store] objects
 // (and the transitive closure of objects they reference by default)
-// to dst in `nix-store --export` format.
-// If no paths are given, then an empty export will be written to dst
-// without using store.
-// Export will not return an error if a path does not exist in src.
+// to an [ObjectWriter].
+// If no paths are given, then Copy will do nothing.
 //
-// If store implements [Exporter], then Export will use store.Export to perform the export.
-// Otherwise, Export will query the store for all the objects needed
-// and serialize them to dst.
-func Export(ctx context.Context, store Store, dst io.Writer, paths sets.Set[Path], opts *ExportOptions) error {
-	if len(paths) == 0 {
-		if _, err := io.WriteString(dst, exportEOFMarker); err != nil {
-			return newExportError(nil, err)
-		}
+// If one or more paths do not exist in the [Store],
+// then Copy will copy all other objects to [ObjectWriter] first.
+// If there are no other errors, Copy will return an error that wraps [ErrNotFound].
+//
+// If dst implements [Importer] and store implements [Exporter],
+// then Copy will pipe store.StoreExport to dst.StoreImport.
+// Otherwise, Export will query the store for all the objects needed.
+func Copy(ctx context.Context, dst ObjectWriter, src Store, paths sets.Set[Path], opts *ExportOptions) error {
+	if paths.Len() == 0 {
 		return nil
 	}
-	if e, ok := store.(Exporter); ok {
-		return e.StoreExport(ctx, dst, paths, opts)
-	}
 
-	maxConcurrency := 1
-	if opts != nil && opts.MaxConcurrency > 1 {
-		maxConcurrency = opts.MaxConcurrency
-	}
-	objects, err := orderedObjectBatch(ctx, store, slices.Values(slices.Sorted(paths.All())), maxConcurrency)
-	if err != nil {
-		return newExportError(slices.Sorted(paths.All()), err)
-	}
-	if excludeRefs := opts != nil && opts.ExcludeReferences; !excludeRefs {
-		objects, err = expandClosure(ctx, store, objects, maxConcurrency)
+	importer, isDestinationImporter := dst.(Importer)
+	exporter, isSourceExporter := src.(Exporter)
+	wrote := make(sets.Set[Path])
+	if isDestinationImporter && isSourceExporter {
+		grp, ctx := errgroup.WithContext(ctx)
+		pr1, pw1 := io.Pipe()
+		pr2, pw2 := io.Pipe()
+
+		grp.Go(func() error {
+			err := exporter.StoreExport(ctx, io.MultiWriter(pw1, pw2), paths, opts)
+			pw1.CloseWithError(err)
+			pw2.CloseWithError(err)
+			return err
+		})
+
+		grp.Go(func() error {
+			rec := new(InfoRecorder)
+			importer := &BufferedImporter{
+				ObjectWriter: rec,
+				BufferCreator: bytebuffer.CreateFunc(func(size int64) (bytebuffer.ReadWriteSeekCloser, error) {
+					return bytebuffer.Null{}, nil
+				}),
+			}
+
+			// Ignore all errors and consume the entire stream
+			// so we don't interrupt the StoreImport.
+			importer.StoreImport(ctx, pr1)
+			io.Copy(io.Discard, pr1)
+			pr1.Close()
+
+			for _, info := range rec.Written {
+				wrote.Add(info.StorePath)
+			}
+			return nil
+		})
+
+		grp.Go(func() error {
+			err := importer.StoreImport(ctx, pr2)
+			pr2.CloseWithError(err)
+			return err
+		})
+
+		if err := grp.Wait(); err != nil {
+			return newCopyError(slices.Sorted(paths.All()), err)
+		}
+	} else {
+		maxConcurrency := 1
+		if opts != nil && opts.MaxConcurrency > 1 {
+			maxConcurrency = opts.MaxConcurrency
+		}
+		objects, err := orderedObjectBatch(ctx, src, slices.Values(slices.Sorted(paths.All())), maxConcurrency)
 		if err != nil {
-			return newExportError(slices.Sorted(paths.All()), err)
+			return newCopyError(slices.Sorted(paths.All()), err)
+		}
+		if excludeRefs := opts != nil && opts.ExcludeReferences; !excludeRefs {
+			objects, err = expandClosure(ctx, src, objects, maxConcurrency)
+			if err != nil {
+				return newCopyError(slices.Sorted(paths.All()), err)
+			}
+		}
+
+		// TODO(someday): Make concurrent if an option is given.
+		for _, obj := range objects {
+			wrote.Add(obj.Info().StorePath)
+			if err := dst.WriteObject(ctx, obj); err != nil {
+				return newCopyError(slices.Sorted(paths.All()), err)
+			}
 		}
 	}
 
-	w := NewExportWriter(dst)
-	for _, obj := range objects {
-		if err := w.WriteObject(ctx, obj); err != nil {
-			return newExportError(slices.Sorted(paths.All()), err)
+	unwrittenPaths := make([]Path, 0, paths.Len())
+	for path := range paths {
+		if !wrote.Has(path) {
+			unwrittenPaths = append(unwrittenPaths, path)
 		}
 	}
-	if err := w.Close(); err != nil {
-		return newExportError(slices.Sorted(paths.All()), err)
+	if len(unwrittenPaths) > 0 {
+		slices.Sort(unwrittenPaths)
+		return newCopyError(unwrittenPaths, ErrNotFound)
 	}
 
 	return nil
@@ -209,23 +263,21 @@ func NewExportWriter(w io.Writer) *ExportWriter {
 	return &ExportWriter{w: w}
 }
 
-// WriteObject copies obj to the export.
+// WriteObject implements [ObjectWriter] by copying obj to the export.
 func (ew *ExportWriter) WriteObject(ctx context.Context, obj Object) error {
 	if err := ew.writeHeader(); err != nil {
-		return err
+		return fmt.Errorf("export %s: %w", obj.Info().StorePath, err)
 	}
 	if err := obj.WriteNAR(ctx, ew.w); err != nil {
-		return err
+		return fmt.Errorf("export %s: %w", obj.Info().StorePath, err)
 	}
 	if err := ew.Trailer(obj.Info().ExportTrailer()); err != nil {
-		return err
+		return fmt.Errorf("export %s: %w", obj.Info().StorePath, err)
 	}
 	return nil
 }
 
 // StoreImport implements [Importer] by copying r to the export.
-// StoreImport performs some basic checks that r is a valid `nix-store --export` stream,
-// but broadly copies r verbatim.
 func (ew *ExportWriter) StoreImport(ctx context.Context, r io.Reader) error {
 	if ew.closed {
 		return fmt.Errorf("write to closed exporter")
@@ -234,57 +286,12 @@ func (ew *ExportWriter) StoreImport(ctx context.Context, r io.Reader) error {
 		return fmt.Errorf("copy export: missing trailer")
 	}
 
-	// Check that data starts with either [exportObjectMarker] or [exportEOFMarker].
-	buf := make([]byte, 0, 32<<10)
-	n, err := io.ReadAtLeast(r, buf[:cap(buf)], max(len(exportObjectMarker), len(exportEOFMarker))+1)
-	buf = buf[:n]
-	if bytes.HasPrefix(buf, []byte(exportEOFMarker)) {
-		if len(buf) > len(exportEOFMarker) {
-			return fmt.Errorf("copy export: export does not start with object marker")
-		}
-		// Ignore any error. We already read the EOF marker.
-		return nil
-	}
-	if len(buf) < len(exportObjectMarker) {
-		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			err = fmt.Errorf("copy export: %v", io.ErrUnexpectedEOF)
-		}
-		// [io.ReadAtLeast] guarantees that the error is non-nil.
-		return err
-	}
-	if string(buf[:len(exportObjectMarker)]) != exportObjectMarker {
-		return fmt.Errorf("copy export: export does not start with object marker")
-	}
-
-	for {
-		// Copy up to the last len(exportEOFMarker) bytes.
-		i := len(buf) - len(exportEOFMarker)
-		if _, err := ew.w.Write(buf[:i]); err != nil {
-			return err
-		}
-		buf = append(buf[:0], buf[i:]...)
-
-		// Read at least one more byte.
-		n, err := io.ReadAtLeast(r, buf[len(buf):cap(buf)], 1)
-		buf = buf[:len(buf)+n]
-		if err != nil {
-			finalWriteSize := len(buf)
-			if err == io.EOF {
-				finalWriteSize -= len(exportEOFMarker)
-				if bytes.HasSuffix(buf, []byte(exportEOFMarker)) {
-					err = nil
-				} else {
-					err = fmt.Errorf("copy export: export does not end with EOF marker")
-				}
-			}
-			if finalWriteSize > 0 {
-				if _, writeError := ew.w.Write(buf[:finalWriteSize]); writeError != nil {
-					return writeError
-				}
-			}
-			return err
-		}
-	}
+	return (&BufferedImporter{
+		ObjectWriter: trailerWriter{ew},
+		BufferCreator: bytebuffer.CreateFunc(func(size int64) (bytebuffer.ReadWriteSeekCloser, error) {
+			return onlyWriter{Writer: ew}, nil
+		}),
+	}).StoreImport(ctx, r)
 }
 
 func (ew *ExportWriter) writeHeader() error {
@@ -384,7 +391,7 @@ func appendNARString(dst []byte, s string) []byte {
 	return dst
 }
 
-func newExportError(paths []Path, err error) error {
+func newCopyError(paths []Path, err error) error {
 	switch len(paths) {
 	case 0:
 		return fmt.Errorf("export store objects: %w", err)
@@ -393,4 +400,28 @@ func newExportError(paths []Path, err error) error {
 	default:
 		return fmt.Errorf("export %s (+%d more): %w", paths[0], len(paths)-1, err)
 	}
+}
+
+type trailerWriter struct {
+	exportWriter *ExportWriter
+}
+
+func (t trailerWriter) WriteObject(ctx context.Context, object Object) error {
+	return t.exportWriter.Trailer(object.Info().ExportTrailer())
+}
+
+type onlyWriter struct {
+	io.Writer
+}
+
+func (onlyWriter) Read(p []byte) (int, error) {
+	return 0, errors.New("cannot read when writing export")
+}
+
+func (onlyWriter) Seek(offset int64, whence int) (int64, error) {
+	return 0, errors.New("cannot seek when writing export")
+}
+
+func (onlyWriter) Close() error {
+	return nil
 }

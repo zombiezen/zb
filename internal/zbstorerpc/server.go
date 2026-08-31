@@ -13,6 +13,7 @@ import (
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 )
 
@@ -150,7 +151,7 @@ type exportDestination struct {
 func ServeExport(ctx context.Context, r io.Reader) error {
 	v := ctx.Value(exportDestinationContextKey{})
 	if v == nil {
-		return nopImporter{}.StoreImport(ctx, r)
+		return zbstore.Null{}.StoreImport(ctx, r)
 	}
 	dst := v.(exportDestination)
 	select {

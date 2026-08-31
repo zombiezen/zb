@@ -18,6 +18,7 @@ import (
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/google/go-cmp/cmp"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/zbstore"
 )
 
 const emptyExport = "\x00\x00\x00\x00\x00\x00\x00\x00"
@@ -187,7 +188,7 @@ func TestServeExport(t *testing.T) {
 		t.Errorf("%s = %+q; want %+q", exportIDHeaderName, got, want)
 	}
 	gotExport := new(bytes.Buffer)
-	if err := (nopImporter{}).StoreImport(ctx, io.TeeReader(r, gotExport)); err != nil {
+	if err := (zbstore.Null{}).StoreImport(ctx, io.TeeReader(r, gotExport)); err != nil {
 		t.Error("Receive export:", err)
 	}
 	if gotExport.String() != emptyExport {
@@ -260,7 +261,7 @@ func (srv *fakeServer) export(ctx context.Context, req *jsonrpc.Request) (*jsonr
 
 func (srv *fakeServer) StoreImport(ctx context.Context, r io.Reader) error {
 	got := new(bytes.Buffer)
-	err := nopImporter{}.StoreImport(ctx, io.TeeReader(r, got))
+	err := zbstore.Null{}.StoreImport(ctx, io.TeeReader(r, got))
 	srv.imports = append(srv.imports, got.Bytes())
 	return err
 }

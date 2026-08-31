@@ -8,16 +8,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"io/fs"
-	"net"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
-	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
@@ -62,7 +58,7 @@ type Options struct {
 // and returns a client connected to it.
 // The server and the client will be closed as part of test cleanup.
 // If opts is nil, it is treated the same as if it was passed new(Options).
-func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Options) (*backend.Server, *zbstorerpc.Client, error) {
+func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Options) (*backend.Server, error) {
 	if opts == nil {
 		opts = new(Options)
 	}
@@ -71,7 +67,7 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 		var err error
 		tempDir, err = os.MkdirTemp("", "zb-backendtest-*")
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		tb.Cleanup(func() {
 			if err := os.RemoveAll(tempDir); err != nil {
@@ -82,10 +78,9 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 
 	buildDir := filepath.Join(tempDir, "build")
 	if err := os.Mkdir(buildDir, 0o777); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	var wg sync.WaitGroup
 	opts2 := new(backend.Options)
 	if opts != nil {
 		*opts2 = opts.Options
@@ -106,32 +101,7 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 	}
 	srv := backend.NewServer(storeDir, filepath.Join(tempDir, "db.sqlite"), opts2)
 
-	clientCtx, stopClient := context.WithCancel(context.WithoutCancel(ctx))
-	client := zbstorerpc.NewClient(clientCtx, func(ctx context.Context) (io.ReadWriteCloser, error) {
-		serverConn, clientConn := net.Pipe()
-		wg.Go(func() {
-			serverReceiver := srv.NewNARReceiver(ctx, bytebuffer.BufferCreator{})
-			defer serverReceiver.Cleanup(context.WithoutCancel(ctx))
-
-			var serverImporter struct {
-				*backend.Server
-				zbstorerpc.Importer
-			}
-			serverImporter.Server = srv
-			serverImporter.Importer = zbstorerpc.NewReceiverImporter(serverReceiver)
-			zbstorerpc.Serve(ctx, serverConn, serverImporter)
-		})
-		return clientConn, nil
-	})
-
 	tb.Cleanup(func() {
-		stopClient()
-		if err := client.Close(); err != nil {
-			tb.Logf("client.Close: %v", err)
-			tb.Fail()
-		}
-		wg.Wait()
-
 		if err := srv.Close(); err != nil {
 			tb.Logf("srv.Close: %v", err)
 			tb.Fail()
@@ -153,7 +123,7 @@ func NewServer(ctx context.Context, tb TB, storeDir zbstore.Directory, opts *Opt
 		})
 	})
 
-	return srv, client, nil
+	return srv, nil
 }
 
 // WaitForBuild waits until the store finishes a build or the context is canceled,

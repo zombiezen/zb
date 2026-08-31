@@ -237,7 +237,7 @@ func TestStoreFetchRealizations(t *testing.T) {
 	})
 }
 
-func TestStorePutRealizations(t *testing.T) {
+func TestStoreWriteRealizations(t *testing.T) {
 	t.Run("Create", func(t *testing.T) {
 		ctx := testcontext.New(t)
 
@@ -256,7 +256,7 @@ func TestStorePutRealizations(t *testing.T) {
 		}
 
 		drvHash := mustParseHash(t, "sha256:bd172e7b837e02a672e417976696642eaabb97847f61a77cf430f515efc97b61")
-		err = store.PutRealizations(ctx, zbstore.RealizationMap{
+		err = store.WriteRealizations(ctx, zbstore.RealizationMap{
 			DerivationHash: drvHash,
 			Realizations: map[string][]*zbstore.Realization{
 				zbstore.DefaultDerivationOutputName: {
@@ -267,7 +267,7 @@ func TestStorePutRealizations(t *testing.T) {
 			},
 		})
 		if err != nil {
-			t.Error("PutRealizations:", err)
+			t.Error("WriteRealizations:", err)
 		}
 
 		gotData, err := os.ReadFile(filepath.Join(dir, "realizations", "0qbvr7pibx9hyiyafqbzhjbvpaifcjb6d5qpwirac0kyhdxjw5xx.json"))
@@ -313,7 +313,7 @@ func TestStorePutRealizations(t *testing.T) {
 		}
 
 		drvHash := mustParseHash(t, "sha256:bd172e7b837e02a672e417976696642eaabb97847f61a77cf430f515efc97b61")
-		err = store.PutRealizations(ctx, zbstore.RealizationMap{
+		err = store.WriteRealizations(ctx, zbstore.RealizationMap{
 			DerivationHash: drvHash,
 			Realizations: map[string][]*zbstore.Realization{
 				zbstore.DefaultDerivationOutputName: {
@@ -333,7 +333,7 @@ func TestStorePutRealizations(t *testing.T) {
 			},
 		})
 		if err != nil {
-			t.Error("PutRealizations:", err)
+			t.Error("WriteRealizations:", err)
 		}
 
 		gotData, err := os.ReadFile(filepath.Join(dir, "realizations", "0qbvr7pibx9hyiyafqbzhjbvpaifcjb6d5qpwirac0kyhdxjw5xx.json"))
@@ -426,7 +426,7 @@ func TestStorePutRealizations(t *testing.T) {
 					}
 
 					drvHash := mustParseHash(t, "sha256:bd172e7b837e02a672e417976696642eaabb97847f61a77cf430f515efc97b61")
-					err = store.PutRealizations(ctx, zbstore.RealizationMap{
+					err = store.WriteRealizations(ctx, zbstore.RealizationMap{
 						DerivationHash: drvHash,
 						Realizations: map[string][]*zbstore.Realization{
 							zbstore.DefaultDerivationOutputName: {
@@ -437,9 +437,9 @@ func TestStorePutRealizations(t *testing.T) {
 						},
 					})
 					if err == nil {
-						t.Error("store.PutRealizations did not return an error")
+						t.Error("store.WriteRealizations did not return an error")
 					} else {
-						t.Log("store.PutRealizations:", err)
+						t.Log("store.WriteRealizations:", err)
 					}
 
 					wantTryCount := int32(1)

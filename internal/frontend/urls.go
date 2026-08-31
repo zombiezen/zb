@@ -240,7 +240,7 @@ func (eval *Eval) importURL(ctx context.Context, u *url.URL) (zbstore.Path, erro
 }
 
 func (eval *Eval) importFlatFile(ctx context.Context, name string, size int64, f io.Reader) (zbstore.Path, error) {
-	exporter, closeExport, err := startExport(ctx, eval.store)
+	exporter, closeExport, err := startExport(ctx, eval.store, eval.exportTemp)
 	if err != nil {
 		return "", fmt.Errorf("import %s: %v", name, err)
 	}

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 
+	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/lua"
 	"zb.256lights.llc/pkg/internal/osutil"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
@@ -127,7 +128,7 @@ func (eval *Eval) pathFunction(ctx context.Context, l *lua.State) (nResults int,
 		}
 	}
 
-	exporter, closeExport, err := startExport(ctx, eval.store)
+	exporter, closeExport, err := startExport(ctx, eval.store, eval.exportTemp)
 	if err != nil {
 		return 0, fmt.Errorf("path: %v", err)
 	}
@@ -296,24 +297,7 @@ func (eval *Eval) toFileFunction(ctx context.Context, l *lua.State) (int, error)
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
 
-	if _, err := eval.store.Object(ctx, blob.StorePath); err != nil {
-		log.Debugf(ctx, "%v", err)
-	} else {
-		// Already exists: no need to re-import.
-		log.Debugf(ctx, "Using existing store path %s", blob.StorePath)
-		pushStorePath(l, blob.StorePath)
-		return 1, nil
-	}
-
-	exporter, closeExport, err := startExport(ctx, eval.store)
-	if err != nil {
-		return 0, fmt.Errorf("toFile %q: %v", name, err)
-	}
-	defer closeExport(false)
-	if err := exporter.WriteObject(ctx, blob); err != nil {
-		return 0, fmt.Errorf("toFile %q: %v", name, err)
-	}
-	if err := closeExport(true); err != nil {
+	if err := eval.store.WriteObject(ctx, blob); err != nil {
 		return 0, fmt.Errorf("toFile %q: %v", name, err)
 	}
 
@@ -647,11 +631,14 @@ func collatePath(a, b string) int {
 	}
 }
 
-func startExport(ctx context.Context, store zbstore.Importer) (exporter *zbstore.ExportWriter, closeFunc func(ok bool) error, err error) {
+func startExport(ctx context.Context, store zbstore.ObjectWriter, createTemp bytebuffer.Creator) (exporter *zbstore.ExportWriter, closeFunc func(ok bool) error, err error) {
 	pr, pw := io.Pipe()
 	done := make(chan error)
 	go func() {
-		err := store.StoreImport(ctx, pr)
+		err := (&zbstore.BufferedImporter{
+			ObjectWriter:  store,
+			BufferCreator: createTemp,
+		}).StoreImport(ctx, pr)
 		pr.Close()
 		done <- err
 		close(done)
@@ -660,21 +647,18 @@ func startExport(ctx context.Context, store zbstore.Importer) (exporter *zbstore
 	exporter = zbstore.NewExportWriter(pw)
 	var once sync.Once
 	closeFunc = func(ok bool) error {
-		var errs [3]error
+		var errs [2]error
 		errs[0] = errors.New("already closed")
 
 		once.Do(func() {
 			if ok {
 				errs[0] = exporter.Close()
-				if errs[0] != nil {
-					errs[1] = pw.CloseWithError(errs[0])
-				} else {
-					errs[1] = pw.Close()
-				}
+				pw.CloseWithError(errs[0])
 			} else {
-				errs[0] = pw.CloseWithError(errors.New("export interrupted"))
+				errs[0] = nil
+				pw.CloseWithError(errors.New("export interrupted"))
 			}
-			errs[2] = <-done
+			errs[1] = <-done
 		})
 
 		for _, err := range errs {

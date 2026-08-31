@@ -353,7 +353,7 @@ func TestClientStoreImport(t *testing.T) {
 				return
 			}
 			gotExport := new(bytes.Buffer)
-			if err := (nopImporter{}).StoreImport(ctx, io.TeeReader(r, gotExport)); err != nil {
+			if err := (zbstore.Null{}).StoreImport(ctx, io.TeeReader(r, gotExport)); err != nil {
 				t.Error("Receive export:", err)
 			}
 			if gotExport.String() != emptyExport {

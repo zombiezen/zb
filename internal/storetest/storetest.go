@@ -17,38 +17,6 @@ import (
 	"zb.256lights.llc/pkg/zbstore"
 )
 
-// BlobReceiver implements [zbstore.NARReceiver]
-// by saving each object as a [*zbstore.Blob].
-// The zero value is ready to use.
-type BlobReceiver struct {
-	Blobs []*zbstore.Blob
-}
-
-// Write appends the byte slice to the last blob in r.Blobs.
-// If the last blob in r.Blobs already has a store path set,
-// then Write appends the byte slice to a new blob.
-func (r *BlobReceiver) Write(p []byte) (int, error) {
-	blob := r.writeBlob()
-	blob.NAR = append(blob.NAR, p...)
-	return len(p), nil
-}
-
-// ReceiveNAR copies the export trailer to the last blob in r.Blobs.
-// If the last blob in r.Blobs already has a store path set,
-// then ReceiveNAR copies the export trailer to a new blob.
-func (r *BlobReceiver) ReceiveNAR(t *zbstore.ExportTrailer) {
-	dst := r.writeBlob()
-	dst.ExportTrailer = *t
-	dst.References = *dst.References.Clone()
-}
-
-func (r *BlobReceiver) writeBlob() *zbstore.Blob {
-	if len(r.Blobs) == 0 || r.Blobs[len(r.Blobs)-1].StorePath != "" {
-		r.Blobs = append(r.Blobs, new(zbstore.Blob))
-	}
-	return r.Blobs[len(r.Blobs)-1]
-}
-
 // BlobSlice implements [zbstore.Store] and [zbstore.Importer]
 // for a slice of [*zbstore.Blob].
 // The zero value is an empty store.
@@ -68,7 +36,7 @@ func (slice BlobSlice) Object(ctx context.Context, path zbstore.Path) (zbstore.O
 // WriteObject copies the object to a [*zbstore.Blob]
 // and appends it to the slice.
 func (slice *BlobSlice) WriteObject(ctx context.Context, object zbstore.Object) error {
-	w := blobWriter{slice: slice}
+	w := blobWriter{adder: slice}
 	buf, err := w.CreateBuffer(-1)
 	if err != nil {
 		return err
@@ -79,17 +47,30 @@ func (slice *BlobSlice) WriteObject(ctx context.Context, object zbstore.Object) 
 	return w.WriteObject(ctx, object)
 }
 
+func (slice *BlobSlice) addBlob(blob *zbstore.Blob) {
+	*slice = append(*slice, blob)
+}
+
 // StoreImport implements [zbstore.Importer]
 // by appending the objects unmarshaled from r into the slice.
 func (slice *BlobSlice) StoreImport(ctx context.Context, r io.Reader) error {
-	recv := new(BlobReceiver)
-	err := zbstore.ReceiveExport(recv, r)
-	*slice = append(*slice, recv.Blobs...)
-	return err
+	return addBlobs(ctx, slice, r)
+}
+
+type blobAdder interface {
+	addBlob(*zbstore.Blob)
+}
+
+func addBlobs(ctx context.Context, adder blobAdder, r io.Reader) error {
+	w := &blobWriter{adder: adder}
+	return (&zbstore.BufferedImporter{
+		ObjectWriter:  w,
+		BufferCreator: w,
+	}).StoreImport(ctx, r)
 }
 
 type blobWriter struct {
-	slice  *BlobSlice
+	adder  blobAdder
 	buffer *singleUseBuffer
 }
 
@@ -106,7 +87,7 @@ func (w *blobWriter) WriteObject(ctx context.Context, object zbstore.Object) err
 		return errors.New("store import did not create a buffer")
 	}
 	info := object.Info()
-	*w.slice = append(*w.slice, &zbstore.Blob{
+	w.adder.addBlob(&zbstore.Blob{
 		NAR:           w.buffer.Bytes(),
 		NARHash:       info.NARHash,
 		ExportTrailer: *info.ExportTrailer(),

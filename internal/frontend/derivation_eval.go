@@ -5,7 +5,6 @@ package frontend
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -13,7 +12,6 @@ import (
 	"zb.256lights.llc/pkg/internal/lualex"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
-	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
 )
 
@@ -187,11 +185,14 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 			panic(outputName + " has an unhandled output type")
 		}
 	}
-	var err error
-	drv.path, err = writeDerivation(ctx, eval.store, drv.Derivation)
+	obj, err := drv.Derivation.Export(nix.SHA256)
 	if err != nil {
 		return 0, fmt.Errorf("derivation: %v", err)
 	}
+	if err := eval.store.WriteObject(ctx, obj); err != nil {
+		return 0, fmt.Errorf("derivation: %v", err)
+	}
+	drv.path = obj.StorePath
 
 	pushStorePath(l, drv.path)
 	if err := l.SetField(ctx, tableCopyIndex, "drvPath"); err != nil {
@@ -314,39 +315,6 @@ func stringToEnvVar(l *lua.State, drv *zbstore.Derivation, idx int) (string, err
 		}
 	}
 	return s, nil
-}
-
-func writeDerivation(ctx context.Context, store Store, drv *zbstore.Derivation) (zbstore.Path, error) {
-	obj, err := drv.Export(nix.SHA256)
-	if err != nil {
-		if drv.Name == "" {
-			return "", fmt.Errorf("write derivation: %v", err)
-		}
-		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
-	}
-
-	if _, err := store.Object(ctx, obj.StorePath); err == nil {
-		// Already exists: no need to re-import.
-		log.Debugf(ctx, "Using existing store path %s", obj.StorePath)
-		return obj.StorePath, nil
-	} else if !errors.Is(err, zbstore.ErrNotFound) {
-		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
-	}
-
-	exporter, closeExport, err := startExport(ctx, store)
-	if err != nil {
-		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
-	}
-	defer closeExport(false)
-
-	if err := exporter.WriteObject(ctx, obj); err != nil {
-		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
-	}
-	if err := closeExport(true); err != nil {
-		return "", fmt.Errorf("write %s derivation: %v", drv.Name, err)
-	}
-
-	return obj.StorePath, nil
 }
 
 func toDerivation(l *lua.State) (*derivation, error) {

@@ -27,7 +27,7 @@ import (
 	"zb.256lights.llc/pkg/zbstore"
 )
 
-func TestStorePutObject(t *testing.T) {
+func TestStoreWriteObject(t *testing.T) {
 	t.Run("Create", func(t *testing.T) {
 		ctx := testcontext.New(t)
 
@@ -66,16 +66,15 @@ func TestStorePutObject(t *testing.T) {
 			},
 		}
 
-		err = store.PutObject(ctx, &PutObjectRequest{
-			StorePath:      objectPath,
-			ContentAddress: ca,
-			GetNAR: func() (io.ReadCloser, error) {
-				return io.NopCloser(bytes.NewReader(narData)), nil
+		err = store.WriteObject(ctx, &zbstore.Blob{
+			NAR: narData,
+			ExportTrailer: zbstore.ExportTrailer{
+				StorePath:      objectPath,
+				ContentAddress: ca,
 			},
-			NARSize: int64(len(narData)),
 		})
 		if err != nil {
-			t.Error("store.PutObject:", err)
+			t.Error("store.WriteObject:", err)
 		}
 
 		if got, err := os.ReadFile(filepath.Join(dir, objectPath.Digest()+".narinfo")); err != nil {
@@ -135,16 +134,15 @@ func TestStorePutObject(t *testing.T) {
 			},
 		}
 
-		err = store.PutObject(ctx, &PutObjectRequest{
-			StorePath:      objectPath,
-			ContentAddress: ca,
-			GetNAR: func() (io.ReadCloser, error) {
-				return io.NopCloser(bytes.NewReader(narData)), nil
+		err = store.WriteObject(ctx, &zbstore.Blob{
+			NAR: narData,
+			ExportTrailer: zbstore.ExportTrailer{
+				StorePath:      objectPath,
+				ContentAddress: ca,
 			},
-			NARSize: int64(len(narData)),
 		})
 		if err != nil {
-			t.Error("store.PutObject:", err)
+			t.Error("store.WriteObject:", err)
 		}
 
 		if got, err := os.ReadFile(filepath.Join(dir, objectPath.Digest()+".narinfo")); err != nil {
@@ -155,7 +153,7 @@ func TestStorePutObject(t *testing.T) {
 			os.WriteFile(dst, got, 0o666)
 		}
 		if _, err := os.Stat(filepath.Join(dir, "upload")); err == nil {
-			t.Error("upload directory exists after PutObject")
+			t.Error("upload directory exists after WriteObject")
 		} else if !errors.Is(err, os.ErrNotExist) {
 			t.Error(err)
 		}
@@ -222,18 +220,17 @@ func TestStorePutObject(t *testing.T) {
 					HTTPClient: srv.Client(),
 				}
 
-				err = store.PutObject(ctx, &PutObjectRequest{
-					StorePath:      objectPath,
-					ContentAddress: ca,
-					GetNAR: func() (io.ReadCloser, error) {
-						return io.NopCloser(bytes.NewReader(narData)), nil
+				err = store.WriteObject(ctx, &zbstore.Blob{
+					NAR: narData,
+					ExportTrailer: zbstore.ExportTrailer{
+						StorePath:      objectPath,
+						ContentAddress: ca,
 					},
-					NARSize: int64(len(narData)),
 				})
 				if err == nil {
-					t.Error("store.PutObject did not return an error")
+					t.Error("store.WriteObject did not return an error")
 				} else {
-					t.Log("store.PutObject:", err)
+					t.Log("store.WriteObject:", err)
 				}
 
 				wantTryCount := int32(1)
@@ -287,18 +284,17 @@ func TestStorePutObject(t *testing.T) {
 			},
 		}
 
-		err = store.PutObject(ctx, &PutObjectRequest{
-			StorePath:      objectPath,
-			ContentAddress: ca,
-			GetNAR: func() (io.ReadCloser, error) {
-				return io.NopCloser(bytes.NewReader(narData)), nil
+		err = store.WriteObject(ctx, &zbstore.Blob{
+			NAR: narData,
+			ExportTrailer: zbstore.ExportTrailer{
+				StorePath:      objectPath,
+				ContentAddress: ca,
 			},
-			NARSize: int64(len(narData)),
 		})
 		if err == nil {
-			t.Error("store.PutObject did not return an error", err)
+			t.Error("store.WriteObject did not return an error", err)
 		} else {
-			t.Log("PutObject error:", err)
+			t.Log("WriteObject error:", err)
 		}
 
 		if got, err := os.ReadFile(filepath.Join(dir, "info1", objectPath.Digest()+".narinfo")); err != nil {
@@ -309,7 +305,7 @@ func TestStorePutObject(t *testing.T) {
 			os.WriteFile(dst, got, 0o666)
 		}
 		if _, err := os.Stat(filepath.Join(dir, "upload")); err == nil {
-			t.Error("upload directory exists after PutObject")
+			t.Error("upload directory exists after WriteObject")
 		} else if !errors.Is(err, os.ErrNotExist) {
 			t.Error(err)
 		}
@@ -355,16 +351,15 @@ func TestStorePutObject(t *testing.T) {
 			},
 		}
 
-		err = store.PutObject(ctx, &PutObjectRequest{
-			StorePath:      objectPath,
-			ContentAddress: ca,
-			GetNAR: func() (io.ReadCloser, error) {
-				return io.NopCloser(bytes.NewReader(narData)), nil
+		err = store.WriteObject(ctx, &zbstore.Blob{
+			NAR: narData,
+			ExportTrailer: zbstore.ExportTrailer{
+				StorePath:      objectPath,
+				ContentAddress: ca,
 			},
-			NARSize: int64(len(narData)),
 		})
 		if err != nil {
-			t.Error("store.PutObject:", err)
+			t.Error("store.WriteObject:", err)
 		}
 
 		if got, err := os.ReadFile(filepath.Join(dir, "info1", objectPath.Digest()+".narinfo")); err != nil {
@@ -438,16 +433,15 @@ func TestStorePutObject(t *testing.T) {
 					},
 				}
 
-				err = store.PutObject(ctx, &PutObjectRequest{
-					StorePath:      objectPath,
-					ContentAddress: ca,
-					GetNAR: func() (io.ReadCloser, error) {
-						return io.NopCloser(bytes.NewReader(narData)), nil
+				err = store.WriteObject(ctx, &zbstore.Blob{
+					NAR: narData,
+					ExportTrailer: zbstore.ExportTrailer{
+						StorePath:      objectPath,
+						ContentAddress: ca,
 					},
-					NARSize: int64(len(narData)),
 				})
 				if err != nil {
-					t.Error("store.PutObject:", err)
+					t.Error("store.WriteObject:", err)
 				}
 
 				if got, err := os.ReadFile(filepath.Join(dir, objectPath.Digest()+".narinfo")); err != nil {

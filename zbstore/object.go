@@ -21,6 +21,7 @@ import (
 // All methods on Object must be safe to call concurrently from multiple goroutines.
 type Object interface {
 	// WriteNAR writes the NAR serialization of the store object to w.
+	// Implementations must not write to dst after WriteNAR returns.
 	WriteNAR(ctx context.Context, dst io.Writer) error
 	// Info returns the metadata of the object.
 	// The caller must not modify any fields in the returned [*ObjectInfo].

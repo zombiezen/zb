@@ -17,7 +17,6 @@ import (
 	"strings"
 
 	"github.com/go-json-experiment/json/jsontext"
-	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/backend"
@@ -192,10 +191,41 @@ func (c *storeObjectImportCommand) Run(ctx context.Context, g *globalConfig) err
 		log.Infof(ctx, "Waiting for data on stdin...")
 	}
 
-	storePaths, err := catExports(ctx, store, inputPaths)
+	recordReader, recordWriter := io.Pipe()
+	ch := make(chan []zbstore.Path)
+	go func() {
+		rec := new(zbstore.InfoRecorder)
+		(&zbstore.BufferedImporter{
+			ObjectWriter: rec,
+			BufferCreator: bytebuffer.CreateFunc(func(size int64) (bytebuffer.ReadWriteSeekCloser, error) {
+				return bytebuffer.Null{}, nil
+			}),
+		}).StoreImport(ctx, recordReader)
+		// If we encountered an error, still consume the rest of the stream.
+		io.Copy(io.Discard, recordReader)
+		recordReader.Close()
+
+		paths := make([]zbstore.Path, 0, len(rec.Written))
+		for _, info := range rec.Written {
+			paths = append(paths, info.StorePath)
+		}
+		ch <- paths
+	}()
+
+	exportReader, exportWriter := io.Pipe()
+	go func() {
+		err := catExports(ctx, io.MultiWriter(recordWriter, exportWriter), inputPaths)
+		recordWriter.CloseWithError(err)
+		exportWriter.CloseWithError(err)
+	}()
+
+	err := store.StoreImport(ctx, exportReader)
+	exportReader.Close()
+	storePaths := <-ch
 	if err != nil {
 		return err
 	}
+
 	ok := true
 	for _, path := range storePaths {
 		var exists bool
@@ -216,149 +246,39 @@ func (c *storeObjectImportCommand) Run(ctx context.Context, g *globalConfig) err
 	return nil
 }
 
-// catExports concatenates the exports from the given files into a single export
-// and sends it to the store connected via the [zbstore.Importer].
-func catExports(ctx context.Context, store zbstore.Importer, exportFiles []string) ([]zbstore.Path, error) {
-	// If there are no files, then no-op.
-	if len(exportFiles) == 0 {
-		return nil, nil
-	}
-
-	// If there is a single file, then copy the file verbatim.
+// catExports concatenates the exports from the given files into a single export.
+func catExports(ctx context.Context, dst io.Writer, exportFiles []string) error {
 	if len(exportFiles) == 1 {
+		// If there is a single file, then stream the file directly.
 		f, err := openInputFile(exportFiles[0])
 		if err != nil {
-			return nil, err
+			return err
 		}
-		defer f.Close()
-
-		// We still need to parse the export to determine store paths to confirm.
-		// If this fails, don't fail the overall operation.
-		pr, pw := io.Pipe()
-		ch := make(chan []zbstore.Path)
-		go func() {
-			rec := &exportPathRecorder{ctx: ctx}
-			if err := zbstore.ReceiveExport(rec, pr); err != nil {
-				log.Warnf(ctx, "Invalid store export format in %s: %v", inputFileName(exportFiles[0]), err)
-			}
-			// If we encountered a parse error, still consume the rest of the stream.
-			io.Copy(io.Discard, pr)
-			pr.Close()
-			ch <- rec.paths
-		}()
-
-		err = store.StoreImport(ctx, io.TeeReader(f, pw))
-		pw.Close()
-		paths := <-ch
-		return paths, err
+		_, err = io.Copy(dst, f)
+		f.Close()
+		return fmt.Errorf("copying %s: %v", inputFileName(exportFiles[0]), err)
 	}
 
-	// Start sending to the store.
-	pr, pw := io.Pipe()
-	ch := make(chan error)
-	go func() {
-		err := store.StoreImport(ctx, pr)
-		pr.CloseWithError(err)
-		ch <- err
-		close(ch)
-	}()
-	defer func() { <-ch }()
-
-	// Copy each NAR inside each export file.
-	var storePaths []zbstore.Path
-	exporter := zbstore.NewExportWriter(pw)
+	exporter := zbstore.NewExportWriter(dst)
 	for _, path := range exportFiles {
-		var err error
-		storePaths, err = copyToExporter(ctx, storePaths, exporter, path)
+		f, err := openInputFile(path)
 		if err != nil {
-			return storePaths, err
+			return err
+		}
+		err = exporter.StoreImport(ctx, f)
+		f.Close()
+		if err != nil {
+			return fmt.Errorf("copying %s: %v", inputFileName(path), err)
 		}
 	}
-	if err := exporter.Close(); err != nil {
-		return storePaths, err
-	}
-	if err := pw.Close(); err != nil {
-		return storePaths, err
-	}
-	err := <-ch
-	return storePaths, err
-}
-
-// copyToExporter reads the file at path in the `nix-store --export` format
-// and copies each NAR file to the exporter.
-// It appends each of the store paths encountered to storePaths.
-func copyToExporter(ctx context.Context, storePaths []zbstore.Path, exporter *zbstore.ExportWriter, path string) ([]zbstore.Path, error) {
-	f, err := openInputFile(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	recv := &passthroughReceiver{exporter: exporter}
-	rec := &exportPathRecorder{
-		ctx:     ctx,
-		paths:   storePaths,
-		wrapped: recv,
-	}
-	if err := zbstore.ReceiveExport(rec, f); err != nil {
-		return rec.paths, fmt.Errorf("copying %s: %v", inputFileName(path), err)
-	}
-	if recv.err != nil {
-		return rec.paths, fmt.Errorf("copying %s: %v", inputFileName(path), recv.err)
-	}
-	return rec.paths, nil
-}
-
-// passthroughReceiver copies NAR files to an exporter.
-// It is a helper for [copyToExporter].
-type passthroughReceiver struct {
-	exporter *zbstore.ExportWriter
-	err      error
-}
-
-func (pr *passthroughReceiver) Write(p []byte) (int, error) {
-	if pr.err != nil {
-		return 0, pr.err
-	}
-	var n int
-	n, pr.err = pr.exporter.Write(p)
-	return n, pr.err
-}
-
-func (pr *passthroughReceiver) ReceiveNAR(trailer *zbstore.ExportTrailer) {
-	if pr.err == nil {
-		pr.err = pr.exporter.Trailer(trailer)
-	}
-}
-
-// exportPathRecorder is a [zbstore.NARReceiver] that records the store paths encountered.
-// It optionally passes through its methods to wrapped.
-type exportPathRecorder struct {
-	ctx     context.Context
-	paths   []zbstore.Path
-	wrapped zbstore.NARReceiver
-}
-
-func (rec *exportPathRecorder) Write(p []byte) (n int, err error) {
-	if rec.wrapped == nil {
-		return len(p), nil
-	}
-	return rec.wrapped.Write(p)
-}
-
-func (rec *exportPathRecorder) ReceiveNAR(trailer *zbstore.ExportTrailer) {
-	log.Debugf(rec.ctx, "Found trailer for %s", trailer.StorePath)
-	rec.paths = append(rec.paths, trailer.StorePath)
-
-	if rec.wrapped != nil {
-		rec.wrapped.ReceiveNAR(trailer)
-	}
+	return exporter.Close()
 }
 
 type storeObjectCopyCommand struct {
-	Paths       []zbstore.Path `kong:"arg,name=path,required,help=Store object paths."`
-	Source      *storeConfig   `kong:"name=from,short=f,help=Store to copy from (default to local)"`
-	Destination *storeConfig   `kong:"name=to,short=t,help=Store to copy to (default to local)"`
+	Paths          []zbstore.Path `kong:"arg,name=path,required,help=Store object paths."`
+	Source         *storeConfig   `kong:"name=from,short=f,help=Store to copy from (default to local)"`
+	Destination    *storeConfig   `kong:"name=to,short=t,help=Store to copy to (default to local)"`
+	MaxConcurrency int            `kong:"short=j,help=Limit maximum concurrent requests,default=2"`
 }
 
 func (c *storeObjectCopyCommand) Signature() string {
@@ -368,6 +288,9 @@ func (c *storeObjectCopyCommand) Signature() string {
 func (c *storeObjectCopyCommand) Validate() error {
 	if c.Source.isNull() && c.Destination.isNull() {
 		return fmt.Errorf("--from or --to must be specified")
+	}
+	if c.MaxConcurrency < 1 {
+		return fmt.Errorf("--max-concurrency must be >1")
 	}
 	return nil
 }
@@ -395,7 +318,9 @@ func (c *storeObjectCopyCommand) Run(ctx context.Context, g *globalConfig) error
 		if err != nil {
 			return err
 		}
-		return storeCopy(ctx, destinationStore, localStore, paths)
+		return zbstore.Copy(ctx, destinationStore, localStore, paths, &zbstore.ExportOptions{
+			MaxConcurrency: c.MaxConcurrency,
+		})
 	case !sourceConfig.isNull() && destinationConfig.isNull():
 		localStore := g.openLocalStore(ctx)
 		defer localStore.Close()
@@ -405,7 +330,9 @@ func (c *storeObjectCopyCommand) Run(ctx context.Context, g *globalConfig) error
 		if err != nil {
 			return err
 		}
-		return storeCopy(ctx, localStore, sourceStore, paths)
+		return zbstore.Copy(ctx, localStore, sourceStore, paths, &zbstore.ExportOptions{
+			MaxConcurrency: c.MaxConcurrency,
+		})
 	case !sourceConfig.isNull() && !destinationConfig.isNull():
 		sourceStore, err := sourceConfig.toStore(func() (zbstorehttp.Client, error) {
 			return provideHTTPClient()
@@ -419,79 +346,12 @@ func (c *storeObjectCopyCommand) Run(ctx context.Context, g *globalConfig) error
 		if err != nil {
 			return err
 		}
-		return storeCopy(ctx, destinationStore, sourceStore, paths)
+		return zbstore.Copy(ctx, destinationStore, sourceStore, paths, &zbstore.ExportOptions{
+			MaxConcurrency: c.MaxConcurrency,
+		})
 	default:
 		return c.Validate()
 	}
-}
-
-func storeCopy(ctx context.Context, dst, src zbstore.Store, paths sets.Set[zbstore.Path]) error {
-	switch dst := dst.(type) {
-	case *zbstorehttp.Store:
-		// TODO(someday): Unify with backend logic.
-		objects, err := zbstore.ObjectClosure(ctx, src, paths, 2)
-		if err != nil {
-			return err
-		}
-		// TODO(someday): Make concurrent.
-		for _, obj := range objects {
-			log.Infof(ctx, "Copying %s...", obj.Info().StorePath)
-			err := dst.PutObject(ctx, &zbstorehttp.PutObjectRequest{
-				StorePath:      obj.Info().StorePath,
-				References:     obj.Info().References,
-				ContentAddress: obj.Info().ContentAddress,
-				NARSize:        obj.Info().NARSize,
-				GetNAR: func() (io.ReadCloser, error) {
-					pr, pw := io.Pipe()
-					done := make(chan struct{})
-					go func() {
-						defer close(done)
-						err := obj.WriteNAR(ctx, pw)
-						pw.CloseWithError(err)
-					}()
-					return xio.ReadFuncCloser{
-						Reader: pr,
-						CloseFunc: func() error {
-							err := pr.Close()
-							<-done
-							return err
-						},
-					}, nil
-				},
-			})
-			if err != nil {
-				return err
-			}
-		}
-	case zbstore.Importer:
-		grp, ctx := errgroup.WithContext(ctx)
-		pr, pw := io.Pipe()
-		spyReader, spyWriter := io.Pipe()
-		grp.Go(func() error {
-			err := zbstore.Export(ctx, src, pw, paths, nil)
-			pw.CloseWithError(err)
-			return err
-		})
-		grp.Go(func() error {
-			err := dst.StoreImport(ctx, io.TeeReader(pr, spyWriter))
-			pr.CloseWithError(err)
-			spyWriter.CloseWithError(err)
-			return err
-		})
-		grp.Go(func() error {
-			defer spyReader.Close()
-			zbstore.ReceiveExport(loggingNARReceiver{ctx}, spyReader)
-			io.Copy(io.Discard, spyReader) // Drain any remaining data from the pipe.
-			return nil
-		})
-		if err := grp.Wait(); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("internal error: unable to copy to %T", dst)
-	}
-
-	return nil
 }
 
 type loggingNARReceiver struct {

@@ -4,7 +4,6 @@
 package frontend
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -77,8 +76,19 @@ func TestURLs(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			exportBuffer := new(bytes.Buffer)
-			exportWriter := zbstore.NewExportWriter(exportBuffer)
+			replacements := make([]string, 0, len(storePaths)*2)
+			for originalName, path := range storePaths {
+				replacements = append(replacements, originalName, string(path))
+			}
+			replacer := strings.NewReplacer(replacements...)
+
+			server, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
+				TempDir: t.TempDir(),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
 			for i, arg := range urls {
 				u, err := ParseURL(arg)
 				if err != nil {
@@ -100,31 +110,13 @@ func TestURLs(t *testing.T) {
 					urlstr += "#" + u.Fragment
 				}
 				urls[i] = urlstr
-				if err := exportWriter.WriteObject(ctx, objects[objectIndex]); err != nil {
+				if err := server.WriteObject(ctx, objects[objectIndex]); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if err := exportWriter.Close(); err != nil {
-				t.Fatal(err)
-			}
-			replacements := make([]string, 0, len(storePaths)*2)
-			for originalName, path := range storePaths {
-				replacements = append(replacements, originalName, string(path))
-			}
-			replacer := strings.NewReplacer(replacements...)
 
-			_, store, err := backendtest.NewServer(ctx, t, storeDir, &backendtest.Options{
-				TempDir: t.TempDir(),
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			evalStore := &testRPCStore{Client: store}
-			if err := evalStore.StoreImport(ctx, exportBuffer); err != nil {
-				t.Fatal(err)
-			}
 			eval, err := NewEval(&Options{
-				Store:          evalStore,
+				Store:          &testRPCStore{client: server},
 				StoreDirectory: storeDir,
 			})
 			if err != nil {

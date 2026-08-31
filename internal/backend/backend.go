@@ -23,17 +23,13 @@ import (
 	"github.com/google/uuid"
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
-	"zb.256lights.llc/pkg/internal/multierror"
 	"zb.256lights.llc/pkg/internal/xiter"
-	"zb.256lights.llc/pkg/internal/xslices"
 	"zb.256lights.llc/pkg/internal/xtime"
-	"zb.256lights.llc/pkg/internal/zbstorehttp"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
-	"zombiezen.com/go/nix/nar"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitemigration"
 	"zombiezen.com/go/sqlite/sqlitex"
@@ -50,6 +46,17 @@ const heartRate = 5 * time.Second
 type Store interface {
 	zbstore.Store
 	zbstore.RealizationFetcher
+}
+
+// Writer combines the [zbstore.ObjectWriter] interface with a WriteRealizations method.
+// A Writer must be safe to use from multiple goroutines concurrently.
+type Writer interface {
+	zbstore.ObjectWriter
+
+	// WriteRealizations stores [zbstore.RealizationMap] values.
+	// If a Writer receives a [zbstore.Realization] identical to one it already has,
+	// it should ignore the new realization and it should not return an error.
+	WriteRealizations(ctx context.Context, realizations zbstore.RealizationMap) error
 }
 
 // Options is the set of optional parameters to [NewServer].
@@ -71,9 +78,9 @@ type Options struct {
 	// that don't exist in the server's store directory.
 	Fallback Store
 
-	// If Upload is not nil, then after a successful builder program run,
-	// the server will upload the object and realizations.
-	Upload *zbstorehttp.Store
+	// If Writer is not nil, then after a successful builder program run,
+	// the server will write the object and realizations.
+	Writer Writer
 
 	// DatabasePoolSize is the maximum permitted number of concurrent connections to the database.
 	// If less than 1, a reasonable default is used.
@@ -159,7 +166,7 @@ type Server struct {
 	buildContext    func(context.Context, string) context.Context
 	keyring         *Keyring
 	fallback        Store
-	upload          *zbstorehttp.Store
+	writer          Writer
 
 	sandbox      bool
 	sandboxPaths map[string]SandboxPath
@@ -216,7 +223,7 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 		buildContext:    opts.BuildContext,
 		keyring:         opts.Keyring.Clone(),
 		fallback:        opts.Fallback,
-		upload:          opts.Upload,
+		writer:          opts.Writer,
 
 		db: sqlitemigration.NewPool(dbPath, loadSchema(), sqlitemigration.Options{
 			Flags:       sqlite.OpenCreate | sqlite.OpenReadWrite,
@@ -381,6 +388,28 @@ func (s *Server) Close() error {
 	s.background.Wait()
 
 	return s.db.Close()
+}
+
+// Object implements [zbstore.Store].
+func (s *Server) Object(ctx context.Context, path zbstore.Path) (zbstore.Object, error) {
+	return s.dbStore().Object(ctx, path)
+}
+
+// ObjectBatch implements [zbstore.BatchStore].
+func (s *Server) ObjectBatch(ctx context.Context, paths sets.Set[zbstore.Path]) ([]zbstore.Object, error) {
+	return s.dbStore().ObjectBatch(ctx, paths)
+}
+
+// StoreExport implements [zbstore.Exporter].
+func (s *Server) StoreExport(ctx context.Context, dst io.Writer, paths sets.Set[zbstore.Path], opts *zbstore.ExportOptions) error {
+	return s.dbStore().StoreExport(ctx, dst, paths, opts)
+}
+
+// WriteObject implements [zbstore.ObjectWriter] by copying the object
+// into the server's store directory.
+// WriteObject can be safely called from multiple goroutines simultaneously.
+func (s *Server) WriteObject(ctx context.Context, obj zbstore.Object) error {
+	return s.newImporter(s.db).WriteObject(ctx, obj)
 }
 
 // JSONRPC implements the [jsonrpc.Handler] interface
@@ -834,33 +863,25 @@ func (s *Server) Register(ctx context.Context, info *zbstore.ObjectInfo) error {
 		return fmt.Errorf("register %s: %v", info.StorePath, err)
 	}
 
-	pr, pw := io.Pipe()
-	done := make(chan struct{})
-	var hasher *nix.Hasher
-	if info.NARHash.IsZero() {
-		hasher = nix.NewHasher(nix.SHA256)
+	var obj zbstore.Object = &filesystemObject{
+		info: *info,
+		path: realPath,
 	}
-	go func() {
-		defer close(done)
-		var dumpWriter io.Writer = pw
-		if hasher != nil {
-			dumpWriter = io.MultiWriter(hasher, pw)
-		}
-		err := nar.DumpPath(dumpWriter, realPath)
-		pw.CloseWithError(err)
-	}()
-	obj := &pipeObject{info: *info, narContent: pr}
+	var hasher *objectHasher
+	if info.NARHash.IsZero() {
+		hasher = &objectHasher{object: obj}
+		obj = hasher
+	}
+
 	info.NARSize, err = zbstore.VerifyObject(ctx, io.Discard, obj, &zbstore.ContentAddressOptions{
 		CreateTemp: s.caCreateTemp,
 		Log:        func(msg string) { log.Debugf(ctx, "%s", msg) },
 	})
-	pr.Close()
-	<-done
 	if err != nil {
 		return fmt.Errorf("register %s: %v", info.StorePath, err)
 	}
 	if hasher != nil {
-		info.NARHash = hasher.SumHash()
+		info.NARHash = hasher.narHash
 	}
 
 	if err := insertObject(ctx, conn, info); err != nil {
@@ -1178,210 +1199,12 @@ func (s *Server) copyFromFallback(ctx context.Context, conn *sqlite.Conn, paths 
 		return nil
 	}
 
-	pr, pw := io.Pipe()
-	exportFinished := make(chan error)
-	go func() {
-		err := zbstore.Export(ctx, s.fallback, pw, sets.Collect(maps.Keys(storePathsToDownload)), nil)
-		pw.CloseWithError(err)
-		exportFinished <- err
-	}()
-
-	recv := s.newNARReceiver(ctx, s.caCreateTemp, &singleConnectionGetter{
-		conn: conn,
-	})
-	pathRecorder := &pathRecorderReceiver{receiver: recv}
-	receiveError := zbstore.ReceiveExport(pathRecorder, pr)
-	recv.Cleanup(ctx)
-	pr.CloseWithError(receiveError)
-	exportError := <-exportFinished
-	if exportError != nil {
-		return fmt.Errorf("failed to copy from fallback store: %v", exportError)
-	}
-	if receiveError != nil {
-		return fmt.Errorf("failed to copy from fallback store: %v", receiveError)
-	}
-
-	var ec multierror.Collector
-	for path, eqClassesForPath := range storePathsToDownload {
-		if !pathRecorder.paths.Has(path) {
-			var err error
-			if eqClassesForPath.Len() > 0 {
-				err = fmt.Errorf("fallback store did not export %s (output of %v)", path, eqClassesForPath)
-			} else {
-				err = fmt.Errorf("fallback store did not export %s", path)
-			}
-			ec.Add(err)
-			continue
-		}
-
-		log.Debugf(ctx, "Waiting for lock on %s (%v)...", path, eqClassesForPath)
-		unlockInput, err := s.writing.lock(ctx, path)
-		if err != nil {
-			return err
-		}
-		_, err = os.Lstat(s.realPath(path))
-		unlockInput()
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				if eqClassesForPath.Len() > 0 {
-					err = fmt.Errorf("failed to import %s (output of %v) from fallback store", path, eqClassesForPath)
-				} else {
-					err = fmt.Errorf("failed to import %s from fallback store", path)
-				}
-			}
-			ec.Add(err)
-		}
-	}
-
-	return ec.Error()
-}
-
-// uploadClosure uploads the store objects in the batch
-// and all transitive dependencies of those store objects.
-// uploadClosure will attempt to upload as many objects as possible
-// without uploading any objects
-// where their referenced objects have not been confirmed to be uploaded.
-func (s *Server) uploadClosure(ctx context.Context, batch iter.Seq[*zbstore.ObjectInfo]) {
-	if s.upload == nil {
-		return
-	}
-
-	objectMap := s.makeObjectInfoMap(ctx, batch, func(err error) {
-		log.Warnf(ctx, "%v", err)
-	})
-	stack := make([]*zbstore.ObjectInfo, 0, len(objectMap))
-	for _, obj := range objectMap {
-		if obj.References.Len() == 0 {
-			stack = append(stack, obj)
-		}
-	}
-
-	done := make(map[zbstore.Path]bool)
-	for len(stack) > 0 {
-		curr := xslices.Last(stack)
-		stack = xslices.Pop(stack, 1)
-		if _, visited := done[curr.StorePath]; visited {
-			continue
-		}
-		err := s.uploadObject(ctx, curr)
-		done[curr.StorePath] = err == nil
-		if err != nil {
-			log.Warnf(ctx, "%v", err)
-			continue
-		}
-		for _, other := range objectMap {
-			if other.StorePath == curr.StorePath || !other.References.Has(curr.StorePath) {
-				continue
-			}
-			if xiter.All(other.References.Values(), func(p zbstore.Path) bool { return done[p] }) {
-				stack = append(stack, other)
-			}
-		}
-	}
-}
-
-// uploadObject uploads a single object to the s.upload store, retrying as necessary.
-func (s *Server) uploadObject(ctx context.Context, obj *zbstore.ObjectInfo) error {
-	if s.upload == nil {
-		return nil
-	}
-
-	log.Infof(ctx, "Uploading %s to store at %s...", obj.StorePath, s.upload.URL.Redacted())
-	log.Debugf(ctx, "Waiting for lock on %s...", obj.StorePath)
-	unlock, err := s.writing.lock(ctx, obj.StorePath)
+	recv := s.newImporter(newSingleConnectionGetter(conn))
+	err = zbstore.Copy(ctx, recv, s.fallback, sets.Collect(maps.Keys(storePathsToDownload)), nil)
 	if err != nil {
-		return fmt.Errorf("upload %s: %w", obj.StorePath, err)
+		return fmt.Errorf("failed to copy from fallback store: %v", err)
 	}
-	realPath := s.realPath(obj.StorePath)
-	_, statError := os.Lstat(realPath)
-	unlock()
-	if statError != nil {
-		return fmt.Errorf("upload %s: %v", obj.StorePath, err)
-	}
-
-	var dumpGroup sync.WaitGroup
-	err = s.upload.PutObject(ctx, &zbstorehttp.PutObjectRequest{
-		StorePath:      obj.StorePath,
-		References:     obj.References,
-		ContentAddress: obj.ContentAddress,
-		NARSize:        obj.NARSize,
-		GetNAR: func() (io.ReadCloser, error) {
-			pr, pw := io.Pipe()
-			dumpGroup.Go(func() {
-				err := nar.DumpPath(pw, realPath)
-				pw.CloseWithError(err)
-			})
-			return pr, nil
-		},
-	})
-	dumpGroup.Wait()
-
-	if err != nil {
-		return err
-	}
-	log.Infof(ctx, "Uploaded %s", obj.StorePath)
 	return nil
-}
-
-// makeObjectInfoMap builds a map of the transitive closure of [*zbstore.ObjectInfo] values
-// for the objects sequence.
-func (s *Server) makeObjectInfoMap(ctx context.Context, objects iter.Seq[*zbstore.ObjectInfo], onError func(error)) map[zbstore.Path]*zbstore.ObjectInfo {
-	result := make(map[zbstore.Path]*zbstore.ObjectInfo)
-	for obj := range objects {
-		result[obj.StorePath] = obj
-	}
-	var stack []zbstore.Path
-	for _, obj := range result {
-		stack = slices.Grow(stack, obj.References.Len())
-		stack = slices.AppendSeq(stack, obj.References.Values())
-	}
-
-	if len(stack) > 0 {
-		conn, err := s.db.Get(ctx)
-		if err != nil {
-			onError(fmt.Errorf("gather object information: %w", err))
-			return result
-		}
-		defer s.db.Put(conn)
-
-		for len(stack) > 0 {
-			curr := xslices.Last(stack)
-			stack = xslices.Pop(stack, 1)
-			if _, ok := result[curr]; ok {
-				continue
-			}
-			result[curr], err = pathInfo(conn, curr)
-			if err != nil {
-				if errors.Is(err, zbstore.ErrNotFound) {
-					log.Debugf(ctx, "%v", err)
-				} else {
-					onError(err)
-				}
-			}
-		}
-
-		for p, obj := range result {
-			if obj == nil {
-				delete(result, p)
-			}
-		}
-	}
-
-	return result
-}
-
-// uploadRealizations uploads a [zbstore.RealizationMap] to the s.upload store, retrying as necessary.
-func (s *Server) uploadRealizations(ctx context.Context, realizations zbstore.RealizationMap) {
-	if s.upload == nil || realizations.IsEmpty() {
-		return
-	}
-
-	err := s.upload.PutRealizations(ctx, realizations)
-	if err == nil {
-		log.Warnf(ctx, "%v", err)
-		return
-	}
-	log.Infof(ctx, "Uploaded realizations for %v", realizations.DerivationHash)
 }
 
 func (s *Server) gcLogs(ctx context.Context, window time.Duration) {
@@ -1563,6 +1386,24 @@ func marshalResponse(data any, opts ...jsonv2.Options) (*jsonrpc.Response, error
 	return &jsonrpc.Response{Result: jsonData}, nil
 }
 
+type objectHasher struct {
+	object  zbstore.Object
+	narHash nix.Hash
+}
+
+func (hasher *objectHasher) Info() *zbstore.ObjectInfo {
+	return hasher.object.Info()
+}
+
+func (hasher *objectHasher) WriteNAR(ctx context.Context, w io.Writer) error {
+	h := nix.NewHasher(nix.SHA256)
+	if err := hasher.object.WriteNAR(ctx, io.MultiWriter(h, w)); err != nil {
+		return err
+	}
+	hasher.narHash = h.SumHash()
+	return nil
+}
+
 // copyFromFallbackError is an error returned by [*Server.copyFromFallback].
 type copyFromFallbackError struct {
 	err error
@@ -1575,16 +1416,3 @@ func isCopyFromFallbackError(err error) bool {
 
 func (e copyFromFallbackError) Error() string { return e.err.Error() }
 func (e copyFromFallbackError) Unwrap() error { return e.err }
-
-const uploadBackoffJitter = 0.25
-
-var uploadBackoffTable = [...]time.Duration{
-	1 * time.Second,
-	1 * time.Second,
-	1 * time.Second,
-	5 * time.Second,
-	5 * time.Second,
-	5 * time.Second,
-	10 * time.Second,
-	30 * time.Second,
-}
