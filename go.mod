@@ -32,7 +32,7 @@ require (
 	zombiezen.com/go/nix v0.0.0-20250514174927-d97ab08b45de
 	zombiezen.com/go/sqlite v1.4.0
 	zombiezen.com/go/uritemplate v0.0.0-20230807232759-d66f0f659650
-	zombiezen.com/go/xcontext v1.1.0
+	zombiezen.com/go/xcontext v1.2.0
 )
 
 require (

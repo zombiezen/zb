@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/coreos/go-systemd/v22/activation"
@@ -37,6 +36,7 @@ import (
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/log/zstdlog"
 	"zombiezen.com/go/nix"
+	"zombiezen.com/go/xcontext"
 )
 
 const contentAddressTempFilePattern = "zb-ca-*"
@@ -189,7 +189,7 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig, drain drainSign
 				// we want to interrupt the listen goroutines by returning a non-nil error.
 				return cmp.Or(err, drainFinished)
 			case <-grpCtx.Done():
-				return grpCtx.Err()
+				return nil
 			}
 		})
 	}
@@ -255,6 +255,7 @@ func (c *serveCommand) listenRPC(ctx context.Context, server *backend.Server, g 
 			return fmt.Errorf("systemd passed in %d sockets (want 1)", len(listeners))
 		}
 		l = listeners[0]
+		log.Infof(ctx, "Listening on systemd-provided socket")
 	} else {
 		if err := os.Remove(g.StoreSocket); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
@@ -272,42 +273,46 @@ func (c *serveCommand) listenRPC(ctx context.Context, server *backend.Server, g 
 				log.Warnf(ctx, "Failed to clean up socket: %v", err)
 			}
 		}()
+		log.Infof(ctx, "Listening on %s", g.StoreSocket)
 	}
 
-	ctx, cancel := context.WithCancel(ctx)
-	var grp sync.WaitGroup
-	defer func() {
-		cancel()
-		grp.Wait()
-	}()
-	log.Infof(ctx, "Listening on %s", g.StoreSocket)
-
-	for {
-		conn, err := l.Accept()
-		if err != nil {
-			return err
-		}
-
-		grp.Go(func() {
-			var serverImporter struct {
-				*backend.Server
-				zbstorerpc.Importer
-			}
-			serverImporter.Server = server
-			serverImporter.Importer = &zbstore.BufferedImporter{
-				// Don't close the connection if an object cannot be written.
-				ObjectWriter: ignoreErrorsObjectWriter{server},
-				HashType:     nix.SHA256,
-				BufferCreator: bytebuffer.TempFileCreator{
-					Pattern: "zb-serve-receive-*.nar",
-				},
-			}
-			err := zbstorerpc.Serve(ctx, conn, serverImporter)
+	grp, ctx := errgroup.WithContext(ctx)
+	closer := xcontext.CloseWhenDone(ctx, l)
+	defer closer.Close()
+	grp.Go(func() error {
+		for {
+			conn, err := l.Accept()
 			if err != nil {
-				log.Debugf(ctx, "Disconnecting from %v: %v", conn.RemoteAddr(), err)
+				return err
 			}
-		})
-	}
+
+			grp.Go(func() error {
+				var serverImporter struct {
+					*backend.Server
+					zbstorerpc.Importer
+				}
+				serverImporter.Server = server
+				serverImporter.Importer = &zbstore.BufferedImporter{
+					// Don't close the connection if an object cannot be written.
+					ObjectWriter: ignoreErrorsObjectWriter{server},
+					HashType:     nix.SHA256,
+					BufferCreator: bytebuffer.TempFileCreator{
+						Pattern: "zb-serve-receive-*.nar",
+					},
+				}
+				err := zbstorerpc.Serve(ctx, conn, serverImporter)
+				// [zbstorerpc.Serve] always returns an error.
+				// A client disconnect should not cause the server to shut down,
+				// so we always return nil.
+				if err != nil {
+					log.Debugf(ctx, "Disconnecting from %v: %v", conn.RemoteAddr(), err)
+				}
+				return nil
+			})
+		}
+	})
+
+	return grp.Wait()
 }
 
 type ignoreErrorsObjectWriter struct {

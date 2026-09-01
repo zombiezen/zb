@@ -527,5 +527,5 @@ zombiezen.com/go/sqlite v1.4.0 h1:N1s3RIljwtp4541Y8rM880qgGIgq3fTD2yks1xftnKU=
 zombiezen.com/go/sqlite v1.4.0/go.mod h1:0w9F1DN9IZj9AcLS9YDKMboubCACkwYCGkzoy3eG5ik=
 zombiezen.com/go/uritemplate v0.0.0-20230807232759-d66f0f659650 h1:TSdjpPKXf/ZtcmZ4+CRhfxHjKRS36FvlDR61VQbYDpg=
 zombiezen.com/go/uritemplate v0.0.0-20230807232759-d66f0f659650/go.mod h1:4KGL4w5fAJq1F5wqhtfHj3QUVEaPjcmh55rIz22SYGA=
-zombiezen.com/go/xcontext v1.1.0 h1:ajQQf4edDi0yOF2jZTf+q+VmrEX/hJZWvimgutXgee4=
-zombiezen.com/go/xcontext v1.1.0/go.mod h1:bXPuLPkAwZShCRDueoyymB/Hjn9qt+S+rfkXqGIKcSc=
+zombiezen.com/go/xcontext v1.2.0 h1:b+dDsyWTIOzjZtmW1Buun2qcCL54KAhxuVlHj/1ihx0=
+zombiezen.com/go/xcontext v1.2.0/go.mod h1:Nh5fEPMzoaLnHSowgEJuQ3DhKaQfI25ST+tPGyNiAPU=
