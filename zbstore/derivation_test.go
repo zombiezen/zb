@@ -225,11 +225,18 @@ func TestDerivationOutputPath(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := derivationOutputPath("/nix/store", test.drvName, test.outputName, test.outputType)
+			drv := &Derivation{
+				Dir:  "/nix/store",
+				Name: test.drvName,
+				Outputs: map[string]*DerivationOutputType{
+					test.outputName: test.outputType,
+				},
+			}
+			got, err := drv.OutputPath(test.outputName)
 			wantOK := test.want != ""
 			if got != test.want || (err == nil) != wantOK {
-				t.Errorf("out.Path(%q, %q, %q) = %q, %v; want %q, %t",
-					nix.DefaultStoreDirectory, test.drvName, test.outputName, got, err, test.want, wantOK)
+				t.Errorf("drv.OutputPath(%q) = %q, %v; want %q, %t",
+					test.outputName, got, err, test.want, wantOK)
 			}
 		})
 	}
