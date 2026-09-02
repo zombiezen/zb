@@ -68,6 +68,12 @@ func TestEndToEnd(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			for i := range archive.Files {
+				file := &archive.Files[i]
+				file.Data = bytes.ReplaceAll(file.Data, []byte("\r\n"), []byte("\n"))
+				// If a file ends in "^D", drop the trailing newline.
+				file.Data = bytes.TrimSuffix(file.Data, []byte("^D\n"))
+			}
 
 			workDir := t.TempDir()
 			for _, file := range archive.Files {

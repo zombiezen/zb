@@ -23,6 +23,7 @@ import (
 	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/internal/xmaps"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
+	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 )
@@ -38,7 +39,9 @@ func (c *derivationCommand) Signature() string {
 
 type derivationShowCommand struct {
 	evalOptions `kong:"embed"`
-	JSONFormat  bool `kong:"name=json,help=Print derivation as JSON."`
+	OutputPath  string `kong:"name=output,short=o,default=-,help=Write to file instead of stdout.,placeholder=FILE"`
+	JSONFormat  bool   `kong:"name=json,help=Print derivation as JSON.,xor=format"`
+	DOTFormat   bool   `kong:"name=dot,help=Print derivation and dependencies as Graphviz DOT.,xor=format"`
 }
 
 func (c *derivationShowCommand) Signature() string {
@@ -50,7 +53,14 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig, stdio 
 	if err != nil {
 		return err
 	}
+	output, err := stdio.openOutputFile(c.OutputPath)
+	if err != nil {
+		return err
+	}
+	defer output.Close()
+
 	var drvPaths []string
+	var urls []string
 	if !c.Expression {
 		// The handling of arguments for `derivation show` is slightly different than other commands.
 		// If the user passes .drv file paths as arguments,
@@ -68,9 +78,11 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig, stdio 
 				if err != nil {
 					return err
 				}
+			} else {
+				urls = append(urls, u.String())
 			}
 		}
-		if !slices.Contains(drvPaths, "") {
+		if !c.DOTFormat && !slices.Contains(drvPaths, "") {
 			// Fast path: don't connect to the store. All arguments are local paths to .drv files.
 			for _, drvPath := range drvPaths {
 				drvBytes, err := showDerivationFile(stdio.abs(drvPath), c.JSONFormat)
@@ -80,9 +92,12 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig, stdio 
 				if !c.JSONFormat && len(args) > 1 {
 					drvBytes = append(drvBytes, '\n')
 				}
-				if _, err := stdio.out.Write(drvBytes); err != nil {
+				if _, err := output.Write(drvBytes); err != nil {
 					return err
 				}
+			}
+			if err := output.Close(); err != nil {
+				return err
 			}
 			return nil
 		}
@@ -109,24 +124,61 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig, stdio 
 	if c.Expression {
 		results, err = eval.Expression(ctx, args[0], system.Current())
 	} else {
-		urls := make([]string, 0, len(args))
-		for i, arg := range args {
-			if drvPaths[i] != "" {
-				continue
-			}
-			u, err := resolveURL(stdio.workdir, arg)
-			if err != nil {
-				return err
-			}
-			urls = append(urls, u.String())
-		}
 		results, err = eval.URLs(ctx, urls, system.Current())
 	}
 	if err != nil {
 		return err
 	}
-	hasMultiple := len(args) > 1 || len(results.DerivationPaths(1)) > 1
 
+	if c.DOTFormat {
+		selected := make(sets.Set[string])
+		drvStorePaths := make(sets.Set[zbstore.Path])
+		var extra []string
+		for _, drvPath := range drvPaths {
+			if drvPath == "" {
+				continue
+			}
+			if drvStorePath, subpath, err := g.Directory.ParsePath(stdio.abs(drvPath)); err == nil && subpath == "" {
+				selected.Add(string(drvStorePath))
+				drvStorePaths.Add(drvStorePath)
+			} else {
+				selected.Add(drvPath)
+				extra = append(extra, drvPath)
+			}
+		}
+		for _, output := range results.All() {
+			for ref := range output.OutputReferences() {
+				drvStorePaths.Add(ref.DrvPath)
+				selected.Add(string(ref.DrvPath))
+			}
+		}
+		gb := newGraphBuilder(selected)
+		for _, drvPath := range extra {
+			drv, err := readDerivation(drvPath)
+			if err != nil {
+				return err
+			}
+			gb.addDerivation(drvPath, "", nil, drv)
+		}
+		err := zbstore.Copy(ctx, gb, storeClient, drvStorePaths, nil)
+		if err != nil {
+			return err
+		}
+		gb.finalize()
+		data, err := gb.graph.MarshalText()
+		if err != nil {
+			return err
+		}
+		if _, err := output.Write(data); err != nil {
+			return err
+		}
+		if err := output.Close(); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	hasMultiple := len(args) > 1 || len(results.DerivationPaths(1)) > 1
 	groupIndex := 1
 	for i := range args {
 		var curr iter.Seq[string]
@@ -151,43 +203,57 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig, stdio 
 			if !c.JSONFormat && hasMultiple {
 				drvBytes = append(drvBytes, '\n')
 			}
-			if _, err := stdio.out.Write(drvBytes); err != nil {
+			if _, err := output.Write(drvBytes); err != nil {
 				return err
 			}
 		}
 	}
 
+	if err := output.Close(); err != nil {
+		return err
+	}
 	return nil
 }
 
 func showDerivationFile(drvPath string, jsonFormat bool) ([]byte, error) {
+	if !jsonFormat {
+		// If we're not outputting JSON, no need to parse. Pass through, even if it's invalid.
+		return os.ReadFile(drvPath)
+	}
+
 	drvPath, err := filepath.Abs(drvPath)
 	if err != nil {
 		return nil, err
 	}
-	dir, err := zbstore.CleanDirectory(filepath.Dir(drvPath))
+	drv, err := readDerivation(drvPath)
 	if err != nil {
 		return nil, err
 	}
-	drvBytes, err := os.ReadFile(drvPath)
-	if err != nil {
-		return nil, err
-	}
-	if !jsonFormat {
-		// If we're not outputting JSON, no need to parse. Pass through, even if it's invalid.
-		return drvBytes, nil
-	}
-	drv, err := zbstore.ParseDerivation(dir, inferDerivationName(drvPath), drvBytes)
-	if err != nil {
-		return nil, fmt.Errorf("parse %s: %v", drvPath, err)
-	}
-
 	jsonData, err := marshalDerivationJSON(drvPath, drv)
 	if err != nil {
 		return nil, err
 	}
 	jsonData = append(jsonData, '\n')
 	return jsonData, nil
+}
+
+func readDerivation(path string) (*zbstore.Derivation, error) {
+	drvBytes, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	drv := new(zbstore.Derivation)
+	if err := drv.UnmarshalText(drvBytes); err != nil {
+		return nil, &os.PathError{
+			Op:   "read",
+			Path: path,
+			Err:  err,
+		}
+	}
+	if drv.Name == "" {
+		drv.Name = inferDerivationName(path)
+	}
+	return drv, nil
 }
 
 func inferDerivationName(path string) string {

@@ -1,0 +1,46 @@
+zb derivation show --dot --output=graph.dot hello.lua
+grep 'hello\.txt' graph.dot
+grep 'hello2\.txt\.drv.*->.*hello\.txt' graph.dot
+grep 'hello4\.txt\.drv.*->.*hello2\.txt.drv' graph.dot
+
+# Check Graphviz syntax.
+? cat graph.dot
+[exec:nop] exec nop -p graph.dot
+
+-- hello.lua --
+local catcatMetatable = { __name = "catcat" }
+
+function catcat(name, input)
+  return setmetatable({
+    name = name;
+    input = input;
+  }, catcatMetatable)
+end
+
+function catcatMetatable:__outputs(system)
+  local drvArgs = {
+    name = self.name;
+    system = system;
+    ["in"] = defaultOutput(self.input, system);
+  }
+  if system:match("-windows$") then
+    drvArgs.builder = [[C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe]]
+    drvArgs.args = {
+      "-Command",
+      [[Write-Output "catcat" ; $x = Get-Content -Raw ${env:in} ; ($x + $x) | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}]],
+    }
+  else
+    drvArgs.builder = "/bin/sh"
+    drvArgs.args = {
+      "-c",
+      [[echo catcat >&2 ; while read line; do echo "$line"; done < $in > $out; while read line; do echo "$line"; done < $in >> $out]],
+    }
+  end
+  return derivation(drvArgs).out
+end
+
+local input = path("hello.txt")
+return catcat("hello4.txt", catcat("hello2.txt", input))
+
+-- hello.txt --
+Hello, World!

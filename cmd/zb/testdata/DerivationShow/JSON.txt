@@ -1,0 +1,4 @@
+zb derivation show --json empty.drv
+stdout '^\{(?:.+,)?\s*"drvPath":".*\}$'
+-- empty.drv --
+Derive([("out","","r:sha256","")],[],[],"x86_64-unknown-linux","/bin/sh",["-c","touch \"$out\""],[("out","/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")])^D
