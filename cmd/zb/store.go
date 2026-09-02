@@ -56,8 +56,9 @@ func (storeObjectCommand) Signature() string {
 }
 
 type storeObjectInfoCommand struct {
-	Paths      []string `kong:"name=path,arg,optional"`
-	JSONFormat bool     `kong:"name=json,Print object info as JSON"`
+	Paths      []zbstore.Path `kong:"name=path,arg,optional"`
+	Recursive  bool           `kong:"short=r,help=Show information for referenced objects."`
+	JSONFormat bool           `kong:"name=json,help=Print object info as JSON"`
 }
 
 func (c *storeObjectInfoCommand) Signature() string {
@@ -68,65 +69,109 @@ func (c *storeObjectInfoCommand) Run(ctx context.Context, g *globalConfig) error
 	store := g.openLocalStore(ctx)
 	defer store.Close()
 
-	const errNotExist = "does not exist"
+	p := &objectInfoPrinter{
+		w:    os.Stdout,
+		json: c.JSONFormat,
+	}
+	return zbstore.Copy(ctx, p, store, sets.Collect(slices.Values(c.Paths)), &zbstore.ExportOptions{
+		ExcludeReferences: !c.Recursive,
+	})
+}
 
-	// TODO(someday): Batch.
-	var buf []byte
-	for i, p := range c.Paths {
-		path, err := zbstore.ParsePath(p)
+type objectInfoPrinter struct {
+	w          io.Writer
+	buf        []byte
+	json       bool
+	wroteFirst bool
+}
+
+func (p *objectInfoPrinter) WriteObject(ctx context.Context, object zbstore.Object) error {
+	defer func() { p.wroteFirst = true }()
+	if p.json {
+		jsonBytes := zbstorerpc.RawObjectInfo(object)
+		var err error
+		jsonBytes, err = p.addPathToRPCObjectInfo(object.Info().StorePath, jsonBytes)
 		if err != nil {
+			return fmt.Errorf("%s: %v", object.Info().StorePath, err)
+		}
+		if _, err := p.w.Write(jsonBytes); err != nil {
 			return err
 		}
+		return nil
+	}
 
-		req := &zbstorerpc.InfoRequest{
-			Path: path,
-		}
-		if c.JSONFormat {
-			// Dump info response directly to preserve unknown fields.
-			var partialParsed struct {
-				Info jsontext.Value `json:"info"`
-			}
-			err = jsonrpc.Do(ctx, store, zbstorerpc.InfoMethod, &partialParsed, req)
-			if err != nil {
-				return fmt.Errorf("%s: %v", path, err)
-			}
-			if string(partialParsed.Info) == "null" {
-				return fmt.Errorf("%s: %v", path, errNotExist)
-			}
-			if err := partialParsed.Info.Compact(); err != nil {
-				return fmt.Errorf("%s: %v", path, err)
-			}
-			jsonBytes := append(slices.Clip([]byte(partialParsed.Info)), '\n')
-			if _, err := os.Stdout.Write(jsonBytes); err != nil {
-				return err
-			}
-			continue
-		}
+	p.buf = p.buf[:0]
+	if p.wroteFirst {
+		// Blank line between entries.
+		p.buf = append(p.buf, '\n')
+	}
+	var err error
+	p.buf, err = object.Info().AppendText(p.buf)
+	if err != nil {
+		return err
+	}
+	if _, err := p.w.Write(p.buf); err != nil {
+		return err
+	}
+	return nil
+}
 
-		resp := new(zbstorerpc.InfoResponse)
-		err = jsonrpc.Do(ctx, store, zbstorerpc.InfoMethod, resp, req)
+func (p *objectInfoPrinter) addPathToRPCObjectInfo(path zbstore.Path, value jsontext.Value) (jsontext.Value, error) {
+	out := bytes.NewBuffer(p.buf[:0])
+	defer func() { p.buf = out.Bytes()[:0] }()
+
+	dec := jsontext.NewDecoder(bytes.NewBuffer(value))
+	tok, err := dec.ReadToken()
+	if err != nil {
+		return nil, err
+	}
+	if tok.Kind() != '{' {
+		return nil, fmt.Errorf("object info must be a JSON object (got %v)", tok.Kind())
+	}
+
+	enc := jsontext.NewEncoder(
+		out,
+		jsontext.SpaceAfterColon(false),
+		jsontext.SpaceAfterComma(false),
+	)
+	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteToken(jsontext.String("path")); err != nil {
+		return nil, err
+	}
+	if err := enc.WriteToken(jsontext.String(string(path))); err != nil {
+		return nil, err
+	}
+keyValues:
+	for {
+		keyToken, err := dec.ReadToken()
 		if err != nil {
-			return fmt.Errorf("%s: %v", path, err)
+			return nil, err
 		}
-		if resp.Info == nil {
-			return fmt.Errorf("%s: %v", path, errNotExist)
+		switch keyToken.Kind() {
+		case '"':
+			if err := enc.WriteToken(keyToken); err != nil {
+				return nil, err
+			}
+		case '}':
+			if err := enc.WriteToken(keyToken); err != nil {
+				return nil, err
+			}
+			break keyValues
+		default:
+			return nil, fmt.Errorf("unexpected token %v", keyToken)
 		}
-
-		buf = buf[:0]
-		if i > 0 {
-			// Blank line between entries.
-			buf = append(buf, '\n')
-		}
-		buf, err = resp.Info.WithPath(path).AppendText(buf)
+		value, err := dec.ReadValue()
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if _, err := os.Stdout.Write(buf); err != nil {
-			return err
+		if err := enc.WriteValue(value); err != nil {
+			return nil, err
 		}
 	}
 
-	return nil
+	return out.Bytes(), nil
 }
 
 type storeObjectExportCommand struct {

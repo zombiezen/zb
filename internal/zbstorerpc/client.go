@@ -4,6 +4,7 @@
 package zbstorerpc
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/rand"
@@ -59,17 +60,24 @@ func (c *Client) JSONRPC(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Re
 
 // Object implements [zbstore.Store] by making an [InfoRequest] to the server.
 func (c *Client) Object(ctx context.Context, path zbstore.Path) (zbstore.Object, error) {
-	resp := new(InfoResponse)
-	err := jsonrpc.Do(ctx, c.client, InfoMethod, resp, &InfoRequest{Path: path})
+	var resp struct {
+		Info jsontext.Value `json:"info"`
+	}
+	err := jsonrpc.Do(ctx, c.client, InfoMethod, &resp, &InfoRequest{Path: path})
 	if err != nil {
 		return nil, fmt.Errorf("stat %s: %v", path, err)
 	}
-	if resp.Info == nil {
+	if len(resp.Info) == 0 || resp.Info.Kind() == 'n' {
 		return nil, fmt.Errorf("stat %s: %w", path, zbstore.ErrNotFound)
 	}
+	info := new(ObjectInfo)
+	if err := jsonv2.Unmarshal(resp.Info, info); err != nil {
+		return nil, fmt.Errorf("stat %s: %v", path, err)
+	}
 	return &object{
-		store: c,
-		info:  *resp.Info.WithPath(path),
+		store:   c,
+		rawInfo: resp.Info,
+		info:    *info.WithPath(path),
 	}, nil
 }
 
@@ -232,9 +240,23 @@ func (c *Client) export(ctx context.Context, dst io.Writer, req *ExportRequest) 
 	}
 }
 
+// RawObjectInfo returns the JSON serialization of the [*ObjectInfo] for the [zbstore.Object].
+// If the object came from [*Client.Object], then this will be the original bytes received.
+func RawObjectInfo(obj zbstore.Object) jsontext.Value {
+	if obj, ok := obj.(*object); ok {
+		return bytes.Clone(obj.rawInfo)
+	}
+	data, err := jsonv2.Marshal(NewObjectInfo(obj.Info()))
+	if err != nil {
+		panic(err)
+	}
+	return data
+}
+
 type object struct {
-	store *Client
-	info  zbstore.ObjectInfo
+	store   *Client
+	info    zbstore.ObjectInfo
+	rawInfo jsontext.Value
 }
 
 func (obj *object) Info() *zbstore.ObjectInfo {
