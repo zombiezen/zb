@@ -65,6 +65,7 @@ func main() {
 }
 
 type generateDigestCommand struct {
+	Count int `kong:"short=n,default=1,Generate multiple digests."`
 }
 
 func (c *generateDigestCommand) Signature() string {
@@ -72,9 +73,11 @@ func (c *generateDigestCommand) Signature() string {
 }
 
 func (c *generateDigestCommand) Run(kc *kong.Context) error {
-	buf := make([]byte, 0, objectDigestSize+len("\n"))
-	buf = appendNewDigest(buf)
-	buf = append(buf, '\n')
+	buf := make([]byte, 0, (objectDigestSize+len("\n"))*c.Count)
+	for range c.Count {
+		buf = appendNewDigest(buf)
+		buf = append(buf, '\n')
+	}
 	_, err := kc.Stdout.Write(buf)
 	return err
 }

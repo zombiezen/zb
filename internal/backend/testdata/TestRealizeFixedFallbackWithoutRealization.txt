@@ -1,0 +1,69 @@
+# Build derivation.
+[x86_64] [linux] realize y89qr7hn51aic1737m62qjwaglw45riz-fixed.txt.drv
+[aarch64] [linux] realize pf3c2dz63lagywcf5r1ab2mijxrkqmsp-fixed.txt.drv
+[aarch64] [macos] realize fwlqqngn0fjzjapy6dwy20irbrinrgb8-fixed.txt.drv
+[x86_64] [windows] realize ri1larrj22ia9vh301xxjilnj1w0r81y-fixed.txt.drv
+! stdout .
+
+-- [fallback] 2jpzm50pphiqic1375zvi342x6xx8ran-fixed.txt [sha256:c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31] --
+Hello, World!
+-- y89qr7hn51aic1737m62qjwaglw45riz-fixed.txt.drv --
+Derive(
+  [("out", "/opt/zb/store/2jpzm50pphiqic1375zvi342x6xx8ran-fixed.txt", "sha256", "c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31")],
+  [],
+  [],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "echo Built ; echo 'Hello, World!' > $out"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- pf3c2dz63lagywcf5r1ab2mijxrkqmsp-fixed.txt.drv --
+Derive(
+  [("out","/opt/zb/store/2jpzm50pphiqic1375zvi342x6xx8ran-fixed.txt","sha256","c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31")],
+  [],
+  [],
+  "aarch64-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "echo Built ; echo 'Hello, World!' > $out"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- fwlqqngn0fjzjapy6dwy20irbrinrgb8-fixed.txt.drv --
+Derive(
+  [("out","/opt/zb/store/2jpzm50pphiqic1375zvi342x6xx8ran-fixed.txt","sha256","c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31")],
+  [],
+  [],
+  "aarch64-apple-macos",
+  "/bin/sh",
+  [
+    "-c",
+    "echo Built ; echo 'Hello, World!' > $out"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- ri1larrj22ia9vh301xxjilnj1w0r81y-fixed.txt.drv --
+Derive(
+  [("out", "C:\\zb\\store\\wssgsrjkbxll73kxc4j2acn9n9bkdyiy-fixed.txt", "sha256", "c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31")],
+  [],
+  [],
+  "x86_64-pc-windows",
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  [
+    "-Command",
+    "Write-Output \"Built\" ; \"Hello, World!`n\" | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
