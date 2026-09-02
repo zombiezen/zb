@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"testing"
 
 	jsonv2 "github.com/go-json-experiment/json"
@@ -18,13 +20,55 @@ import (
 )
 
 func TestDefaultGlobalConfig(t *testing.T) {
-	got := defaultGlobalConfig()
-	if got.Directory == "" {
-		t.Errorf("defaultGlobalConfig().Directory is empty")
-	}
-	if got.StoreSocket == "" {
-		t.Errorf("defaultGlobalConfig().StoreSocket is empty")
-	}
+	t.Run("Unix", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skipf("Not running on %s", runtime.GOOS)
+		}
+		got := defaultGlobalConfig(func(key string) (string, bool) {
+			if key == "HOME" {
+				return "/home/foo", true
+			}
+			return "", false
+		})
+		want := &globalConfig{
+			Directory:   zbstore.DefaultUnixDirectory,
+			StoreSocket: "/opt/zb/var/zb/server.sock",
+			NetrcPath:   "/home/foo/.netrc",
+			CacheDB:     "/home/foo/.cache/zb/cache.db",
+			HTTPCacheDB: "/home/foo/.cache/zb/http-cache.db",
+		}
+		if diff := cmp.Diff(want, got, globalConfigCompareOptions); diff != "" {
+			t.Errorf("defaultGlobalConfig(HOME=/home/foo) (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("Windows", func(t *testing.T) {
+		if runtime.GOOS != "windows" {
+			t.Skipf("Not running on %s", runtime.GOOS)
+		}
+		got := defaultGlobalConfig(func(key string) (string, bool) {
+			switch strings.ToUpper(key) {
+			case "USERPROFILE":
+				return `C:\Users\foo`, true
+			case "APPDATA":
+				return `C:\Users\foo\AppData\Roaming`, true
+			case "LOCALAPPDATA":
+				return `C:\Users\foo\AppData\Local`, true
+			default:
+				return "", false
+			}
+		})
+		want := &globalConfig{
+			Directory:   zbstore.DefaultWindowsDirectory,
+			StoreSocket: `C:\zb\var\zb\server.sock`,
+			NetrcPath:   `C:\Users\foo\.netrc`,
+			CacheDB:     `C:\Users\foo\AppData\Local\zb\cache.db`,
+			HTTPCacheDB: `C:\Users\foo\AppData\Local\zb\http-cache.db`,
+		}
+		if diff := cmp.Diff(want, got, globalConfigCompareOptions); diff != "" {
+			t.Errorf("defaultGlobalConfig(...) (-want +got):\n%s", diff)
+		}
+	})
 }
 
 func TestGlobalConfigMergeFiles(t *testing.T) {
@@ -158,7 +202,9 @@ func FuzzConfigMarshal(f *testing.F) {
 	f.Add([]byte(`{"server": {"signingKeyFiles": ["secret-key.json"]}}` + "\n"))
 
 	f.Fuzz(func(t *testing.T, in []byte) {
-		init := defaultGlobalConfig()
+		init := defaultGlobalConfig(func(key string) (string, bool) {
+			return "", false
+		})
 		if err := jsonv2.Unmarshal(in, &init); err != nil {
 			t.Skip(err)
 		}

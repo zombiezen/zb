@@ -96,6 +96,7 @@ from roughly 10 minutes to XX seconds with a reasonably fast internet connection
 - `zb store object delete` is no longer flaky.
   ([#135](https://github.com/256lights/zb/issues/135))
 - `zb build --out-link` is now respected.
+  This option is not available on Windows.
   ([#324](https://github.com/256lights/zb/issues/324))
 - Lua operator metamethods now receive their arguments in the correct order
   when one of the operands is a constant.

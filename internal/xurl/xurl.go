@@ -10,6 +10,61 @@ import (
 	"strings"
 )
 
+// ResolveReference resolves a URI reference relative to a base URI,
+// per [RFC 3986 Section 5.2].
+// ResolveReference always returns a new [*url.URL],
+// even if the returned URL is identical to either base or reference.
+//
+// [RFC 3986 Section 5.2]: https://datatracker.ietf.org/doc/html/rfc3986#section-5.2
+func ResolveReference(base, ref *url.URL) *url.URL {
+	// TODO(https://go.dev/issue/80282): Ideally, this would just be base.ResolveReference(ref).
+	// But the standard library does not follow the RFC.
+
+	base = CleanPath(base)
+	if ref.Scheme != "" || ref.Host != "" || ref.User != nil {
+		t := ref
+		if t.Scheme == "" {
+			t = new(*ref)
+			t.Scheme = base.Scheme
+		}
+		return CleanPath(t)
+	}
+	t := &url.URL{
+		Scheme:      base.Scheme,
+		Host:        base.Host,
+		User:        base.User,
+		Fragment:    ref.Fragment,
+		RawFragment: ref.RawFragment,
+	}
+	refPath := ref.EscapedPath()
+	switch {
+	case refPath == "":
+		t.Path = base.Path
+		t.RawPath = base.RawPath
+	case strings.HasPrefix(refPath, "/"):
+		t.Path = ref.Path
+		t.RawPath = ref.RawPath
+		t = CleanPath(t)
+	case (base.Host != "" || base.User != nil) && base.Path == "":
+		t.Path = "/" + ref.Path
+		t.RawPath = "/" + refPath
+		t = CleanPath(t)
+	default:
+		basePath := base.EscapedPath()
+		i := strings.LastIndexByte(basePath, '/') + 1
+		setRawPath(t, basePath[:i]+refPath)
+		t = CleanPath(t)
+	}
+	if refPath != "" || ref.ForceQuery || ref.RawQuery != "" {
+		t.RawQuery = ref.RawQuery
+		t.ForceQuery = ref.ForceQuery
+	} else {
+		t.RawQuery = base.RawQuery
+		t.ForceQuery = base.ForceQuery
+	}
+	return t
+}
+
 // CleanPath returns the shortest [*url.URL] equivalent to u purely by lexical processing.
 // It applies the following rules iteratively until no further processing can be done:
 //

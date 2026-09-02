@@ -10,7 +10,6 @@ import (
 	"io"
 	"path/filepath"
 
-	"github.com/alecthomas/kong"
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
@@ -42,21 +41,25 @@ func (c *packNARCommand) Validate() error {
 	return nil
 }
 
-func (c *packNARCommand) Run(ctx context.Context, k *kong.Kong) error {
-	outputFile, err := openOutputFile(c.OutputPath)
+func (c *packNARCommand) Run(ctx context.Context, stdio *standardStreams) error {
+	outputFile, err := stdio.openOutputFile(c.OutputPath)
 	if err != nil {
 		return err
 	}
 	if c.SelfReferences {
-		err = runPackNARSelfRefs(ctx, outputFile.(io.ReadWriteSeeker), c.InputPath)
+		var finalStorePath zbstore.Path
+		finalStorePath, err = runPackNARSelfRefs(ctx, outputFile.(io.ReadWriteSeeker), stdio.abs(c.InputPath))
+		if _, err := fmt.Fprintln(stdio.out, finalStorePath); err != nil {
+			return err
+		}
 	} else {
-		err = nar.DumpPath(outputFile, c.InputPath)
+		err = nar.DumpPath(outputFile, stdio.abs(c.InputPath))
 	}
 	err = errors.Join(err, outputFile.Close())
 	return err
 }
 
-func runPackNARSelfRefs(ctx context.Context, dst io.ReadWriteSeeker, path string) error {
+func runPackNARSelfRefs(ctx context.Context, dst io.ReadWriteSeeker, path string) (zbstore.Path, error) {
 	type caResult struct {
 		ca       zbstore.ContentAddress
 		analysis *zbstore.SelfReferenceAnalysis
@@ -68,11 +71,11 @@ func runPackNARSelfRefs(ctx context.Context, dst io.ReadWriteSeeker, path string
 	var err error
 	path, err = filepath.Abs(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	storePath, err := zbstore.ParsePath(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// Serialize as NAR, noting any occurrence of the digest as it is written.
@@ -92,10 +95,10 @@ func runPackNARSelfRefs(ctx context.Context, dst io.ReadWriteSeeker, path string
 	pw.CloseWithError(err)
 	result := <-c // Always wait on goroutine.
 	if err != nil {
-		return err
+		return "", err
 	}
 	if result.err != nil {
-		return err
+		return "", err
 	}
 
 	// Compute the final store path.
@@ -103,20 +106,14 @@ func runPackNARSelfRefs(ctx context.Context, dst io.ReadWriteSeeker, path string
 		Self: result.analysis.HasSelfReferences(),
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// If the digest differs, rewrite each occurrence.
 	if finalDigest := finalStorePath.Digest(); finalDigest != originalDigest {
 		if err := zbstore.Rewrite(dst, 0, finalDigest, result.analysis.Rewrites); err != nil {
-			return err
+			return "", err
 		}
 	}
-
-	// Print the full store path to stdout.
-	if _, err := fmt.Println(finalStorePath); err != nil {
-		return err
-	}
-
-	return nil
+	return finalStorePath, nil
 }

@@ -12,7 +12,6 @@ import (
 	"io"
 	"os"
 
-	"github.com/alecthomas/kong"
 	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/go-json-experiment/json/jsontext"
 	"zb.256lights.llc/pkg/internal/backend"
@@ -72,8 +71,8 @@ func (c *generateKeyCommand) Signature() string {
 	return `help:"Generate a new signing key."`
 }
 
-func (c *generateKeyCommand) Run(ctx context.Context) error {
-	outputFile, err := openOutputFile(cmp.Or(c.OutputPath, "-"))
+func (c *generateKeyCommand) Run(ctx context.Context, stdio *standardStreams) error {
+	outputFile, err := stdio.openOutputFile(cmp.Or(c.OutputPath, "-"))
 	if err != nil {
 		return err
 	}
@@ -105,16 +104,17 @@ func (c *showPublicKeyCommand) Signature() string {
 	return `help:"Print public key of signing keys."`
 }
 
-func (c *showPublicKeyCommand) Run(k *kong.Kong) error {
-	if len(c.Paths) == 0 {
-		return c.run(k.Stdout, os.Stdin)
+func (c *showPublicKeyCommand) Run(stdio *standardStreams) error {
+	inputPaths := c.Paths
+	if len(inputPaths) == 0 {
+		inputPaths = []string{"-"}
 	}
-	for _, path := range c.Paths {
-		f, err := os.Open(path)
+	for _, path := range inputPaths {
+		f, err := stdio.openInputFile(path)
 		if err != nil {
 			return err
 		}
-		err = c.run(k.Stdout, f)
+		err = c.run(stdio.out, f)
 		f.Close()
 		if err != nil {
 			return err

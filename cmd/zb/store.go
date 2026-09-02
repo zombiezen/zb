@@ -14,13 +14,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"github.com/go-json-experiment/json/jsontext"
-	"golang.org/x/term"
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/backend"
-	"zb.256lights.llc/pkg/internal/fileurl"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/internal/zbstorehttp"
@@ -65,7 +62,7 @@ func (c *storeObjectInfoCommand) Signature() string {
 	return `kong:"help=Show metadata of one or more store objects."`
 }
 
-func (c *storeObjectInfoCommand) Run(ctx context.Context, g *globalConfig) error {
+func (c *storeObjectInfoCommand) Run(ctx context.Context, g *globalConfig, stdio *standardStreams) error {
 	store := g.openLocalStore(ctx)
 	defer store.Close()
 
@@ -184,12 +181,12 @@ func (c *storeObjectExportCommand) Signature() string {
 	return `kong:"help=Export one or more store objects."`
 }
 
-func (c *storeObjectExportCommand) Run(ctx context.Context, g *globalConfig) error {
-	if c.OutputPath == "" && term.IsTerminal(int(os.Stdout.Fd())) {
+func (c *storeObjectExportCommand) Run(ctx context.Context, g *globalConfig, stdio *standardStreams) error {
+	if c.OutputPath == "" && stdio.isOutputTerminal() {
 		//lint:ignore ST1005 Output is known to be a terminal: punctuation is okay.
 		return errors.New("refusing to send binary export to stdout (a tty). Pass --output=- to override.")
 	}
-	output, err := openOutputFile(c.OutputPath)
+	output, err := stdio.openOutputFile(c.OutputPath)
 	if err != nil {
 		return err
 	}
@@ -224,7 +221,7 @@ func (c *storeObjectImportCommand) Signature() string {
 	return `kong:"help=Import store objects from a previous \\'zb store object export\\' command."`
 }
 
-func (c *storeObjectImportCommand) Run(ctx context.Context, g *globalConfig) error {
+func (c *storeObjectImportCommand) Run(ctx context.Context, g *globalConfig, stdio *standardStreams) error {
 	store := g.openLocalStore(ctx)
 	defer store.Close()
 
@@ -232,7 +229,7 @@ func (c *storeObjectImportCommand) Run(ctx context.Context, g *globalConfig) err
 	if len(inputPaths) == 0 {
 		inputPaths = []string{"-"}
 	}
-	if len(inputPaths) == 1 && inputPaths[0] == "-" && term.IsTerminal(int(os.Stdin.Fd())) {
+	if len(inputPaths) == 1 && inputPaths[0] == "-" && stdio.isInputTerminal() {
 		log.Infof(ctx, "Waiting for data on stdin...")
 	}
 
@@ -259,7 +256,7 @@ func (c *storeObjectImportCommand) Run(ctx context.Context, g *globalConfig) err
 
 	exportReader, exportWriter := io.Pipe()
 	go func() {
-		err := catExports(ctx, io.MultiWriter(recordWriter, exportWriter), inputPaths)
+		err := catExports(ctx, io.MultiWriter(recordWriter, exportWriter), stdio, inputPaths)
 		recordWriter.CloseWithError(err)
 		exportWriter.CloseWithError(err)
 	}()
@@ -292,10 +289,10 @@ func (c *storeObjectImportCommand) Run(ctx context.Context, g *globalConfig) err
 }
 
 // catExports concatenates the exports from the given files into a single export.
-func catExports(ctx context.Context, dst io.Writer, exportFiles []string) error {
+func catExports(ctx context.Context, dst io.Writer, stdio *standardStreams, exportFiles []string) error {
 	if len(exportFiles) == 1 {
 		// If there is a single file, then stream the file directly.
-		f, err := openInputFile(exportFiles[0])
+		f, err := stdio.openInputFile(exportFiles[0])
 		if err != nil {
 			return err
 		}
@@ -306,7 +303,7 @@ func catExports(ctx context.Context, dst io.Writer, exportFiles []string) error 
 
 	exporter := zbstore.NewExportWriter(dst)
 	for _, path := range exportFiles {
-		f, err := openInputFile(path)
+		f, err := stdio.openInputFile(path)
 		if err != nil {
 			return err
 		}
@@ -340,13 +337,8 @@ func (c *storeObjectCopyCommand) Validate() error {
 	return nil
 }
 
-func (c *storeObjectCopyCommand) Run(ctx context.Context, g *globalConfig) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	base := fileurl.FromPath(cwd)
-	base.Path = strings.TrimRight(base.Path, "/") + "/"
+func (c *storeObjectCopyCommand) Run(ctx context.Context, g *globalConfig, stdio *standardStreams) error {
+	base := baseDirectoryURL(stdio.workdir)
 	sourceConfig := c.Source.resolve(base)
 	destinationConfig := c.Destination.resolve(base)
 	paths := sets.Collect(slices.Values(c.Paths))
@@ -443,17 +435,10 @@ func (c *storeObjectDeleteCommand) Run(ctx context.Context, g *globalConfig) err
 
 type storeObjectRegisterCommand struct {
 	storeDatabaseFlags `kong:"embed"`
-
-	Input io.Reader `kong:"-"`
 }
 
 func (c *storeObjectRegisterCommand) Signature() string {
 	return `kong:"help=Add info for objects already present in the store directory."`
-}
-
-func (c *storeObjectRegisterCommand) BeforeResolve() error {
-	c.Input = os.Stdin
-	return nil
 }
 
 //go:embed docs/store_object_register.txt
@@ -463,7 +448,7 @@ func (c *storeObjectRegisterCommand) Help() string {
 	return storeObjectRegisterDoc
 }
 
-func (c *storeObjectRegisterCommand) Run(ctx context.Context, g *globalConfig) error {
+func (c *storeObjectRegisterCommand) Run(ctx context.Context, g *globalConfig, stdio *standardStreams) error {
 	if err := os.MkdirAll(filepath.Dir(c.DBPath), 0o755); err != nil {
 		return err
 	}
@@ -476,7 +461,7 @@ func (c *storeObjectRegisterCommand) Run(ctx context.Context, g *globalConfig) e
 	})
 	defer backendServer.Close()
 
-	s := bufio.NewScanner(c.Input)
+	s := bufio.NewScanner(stdio.in)
 	s.Split(splitObjectInfos)
 	ok := true
 	for info := new(zbstore.ObjectInfo); s.Scan(); {

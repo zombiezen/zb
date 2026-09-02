@@ -1,0 +1,33 @@
+zb build hello.lua
+stdout ^$ZB_STORE_DIR
+[!windows] stderr '^hi from builder$'
+[windows] stderr '^hi from builder\r\n'
+read resultPath
+grep '\AHello, World!\n\z' $resultPath
+[!windows] grep '\AHello, World!\n\z' result
+
+-- hello.lua --
+return setmetatable({}, {
+  __outputs = function(self, system)
+    local builder, args
+    if system:match("-windows$") then
+      builder = [[C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe]]
+      args = {
+        "-Command",
+        [[Write-Output "hi from builder" ; "Hello, World!`n" | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}]],
+      }
+    else
+      builder = "/bin/sh"
+      args = {
+        "-c",
+        [[echo 'hi from builder' ; echo 'Hello, World!' > $out]],
+      }
+    end
+    return (derivation {
+      name = "hello.txt";
+      builder = builder;
+      args = args;
+      system = system;
+    }).out
+  end;
+})

@@ -25,6 +25,7 @@ import (
 	"zb.256lights.llc/pkg/internal/multierror"
 	"zb.256lights.llc/pkg/internal/xhttp"
 	"zb.256lights.llc/pkg/internal/xtime"
+	"zb.256lights.llc/pkg/internal/xurl"
 	"zb.256lights.llc/pkg/zbstore"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/nix"
@@ -478,7 +479,7 @@ func (obj *httpObject) WriteNAR(ctx context.Context, dst io.Writer) error {
 }
 
 func resolveReference(baseURL, ref *url.URL) (*url.URL, error) {
-	targetURL := baseURL.ResolveReference(ref)
+	targetURL := xurl.ResolveReference(baseURL, ref)
 	if (targetURL.Scheme == "" || targetURL.Scheme == fileurl.Scheme) && baseURL.Scheme != fileurl.Scheme {
 		return nil, fmt.Errorf("link to %s not permitted from %s", ref.Redacted(), baseURL.Redacted())
 	}

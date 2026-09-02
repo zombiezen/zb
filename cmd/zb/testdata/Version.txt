@@ -1,0 +1,6 @@
+zb --version
+[x86_64] stdout '^System:\s+x86_64-'
+[aarch64] stdout '^System:\s+aarch64-'
+[linux] stdout '^OS:\s+Linux\b'
+[macos] stdout '^OS:\s+macOS\b'
+[windows] stdout '^OS:\s+.*\bWindows\b'

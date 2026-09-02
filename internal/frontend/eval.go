@@ -66,6 +66,9 @@ type Options struct {
 	// CacheDBPath is the path to a database file used to speed up store imports.
 	// If empty, an in-memory cache will be used.
 	CacheDBPath string
+	// WorkingDirectory is used as the working directory for expressions.
+	// Defaults to the process's working directory.
+	WorkingDirectory string
 	// LookupEnv is called for the Lua os.getenv function.
 	// If nil, os.getenv will always return nil.
 	LookupEnv func(ctx context.Context, key string) (string, bool)
@@ -102,6 +105,7 @@ type Eval struct {
 	store        Store
 	storeDir     zbstore.Directory
 	cachePool    *sqlitemigration.Pool
+	workDir      string
 	lookupEnv    func(ctx context.Context, key string) (string, bool)
 	httpClient   HTTPClient
 	downloadTemp bytebuffer.Creator
@@ -143,6 +147,10 @@ func NewEval(opts *Options) (_ *Eval, err error) {
 	}
 	if eval.exportTemp == nil {
 		eval.exportTemp = bytebuffer.BufferCreator{}
+	}
+	eval.workDir, err = filepath.Abs(opts.WorkingDirectory)
+	if err != nil {
+		return nil, fmt.Errorf("zb: new eval: %v", err)
 	}
 
 	var schema sqlitemigration.Schema

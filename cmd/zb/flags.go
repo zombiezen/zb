@@ -7,7 +7,6 @@ import (
 	"encoding/csv"
 	"fmt"
 	"iter"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -162,11 +161,13 @@ func mapPathMap(dc *kong.DecodeContext, target reflect.Value) error {
 	return nil
 }
 
-func mapNativeStorePath(dc *kong.DecodeContext, target reflect.Value) error {
+func mapNativeStorePath(dc *kong.DecodeContext, workdir string, target reflect.Value) error {
 	storePathType := reflect.TypeFor[zbstore.Path]()
 	if tp := target.Type(); tp != storePathType {
 		if tp.Kind() == reflect.Slice && tp.Elem() == storePathType {
-			return decodeSlice(dc, kong.MapperFunc(mapNativeStorePath), target)
+			return decodeSlice(dc, kong.MapperFunc(func(dc *kong.DecodeContext, target reflect.Value) error {
+				return mapNativeStorePath(dc, workdir, target)
+			}), target)
 		}
 		return fmt.Errorf("%v is not a zbstore.Path", tp)
 	}
@@ -175,7 +176,7 @@ func mapNativeStorePath(dc *kong.DecodeContext, target reflect.Value) error {
 	if err := dc.Scan.PopValueInto("path", &arg); err != nil {
 		return err
 	}
-	path, err := parseNativeStorePath(arg)
+	path, err := zbstore.ParsePath(resolvePath(workdir, arg))
 	if err != nil {
 		return err
 	}
@@ -233,14 +234,6 @@ func decodeSlice(dc *kong.DecodeContext, mapper kong.Mapper, target reflect.Valu
 	}
 
 	return nil
-}
-
-func parseNativeStorePath(s string) (zbstore.Path, error) {
-	s, err := filepath.Abs(s)
-	if err != nil {
-		return "", err
-	}
-	return zbstore.ParsePath(s)
 }
 
 func findFlagByName(name string, flags iter.Seq[*kong.Flag]) *kong.Flag {

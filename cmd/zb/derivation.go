@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"iter"
 	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -44,16 +45,20 @@ func (c *derivationShowCommand) Signature() string {
 	return `help:"Show the contents of one or more derivations."`
 }
 
-func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error {
+func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig, stdio *standardStreams, env envLookupFunc) error {
+	args, err := c.resolveArgs(stdio.workdir)
+	if err != nil {
+		return err
+	}
 	var drvPaths []string
 	if !c.Expression {
 		// The handling of arguments for `derivation show` is slightly different than other commands.
 		// If the user passes .drv file paths as arguments,
 		// we'll show the .drv file directly rather than trying to interpret it as a Lua file.
 		// These can be interspersed with other URLs.
-		drvPaths = make([]string, len(c.Args))
-		for i, arg := range c.Args {
-			u, err := frontend.ParseURL(arg)
+		drvPaths = make([]string, len(args))
+		for i, arg := range args {
+			u, err := url.Parse(arg)
 			if err != nil {
 				return err
 			}
@@ -68,14 +73,14 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error 
 		if !slices.Contains(drvPaths, "") {
 			// Fast path: don't connect to the store. All arguments are local paths to .drv files.
 			for _, drvPath := range drvPaths {
-				drvBytes, err := showDerivationFile(drvPath, c.JSONFormat)
+				drvBytes, err := showDerivationFile(stdio.abs(drvPath), c.JSONFormat)
 				if err != nil {
 					return err
 				}
-				if !c.JSONFormat && len(c.Args) > 1 {
+				if !c.JSONFormat && len(args) > 1 {
 					drvBytes = append(drvBytes, '\n')
 				}
-				if _, err := os.Stdout.Write(drvBytes); err != nil {
+				if _, err := stdio.out.Write(drvBytes); err != nil {
 					return err
 				}
 			}
@@ -90,7 +95,7 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error 
 	defer cleanup()
 	storeClient := g.openLocalStore(ctx)
 	defer storeClient.Close()
-	eval, err := c.newEval(g, httpClient, storeClient)
+	eval, err := c.newEval(g, stdio, env, httpClient, storeClient)
 	if err != nil {
 		return err
 	}
@@ -102,24 +107,28 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error 
 
 	var results frontend.OutputMap
 	if c.Expression {
-		results, err = eval.Expression(ctx, c.Args[0], system.Current())
+		results, err = eval.Expression(ctx, args[0], system.Current())
 	} else {
-		urls := make([]string, 0, len(c.Args))
-		for i, arg := range c.Args {
+		urls := make([]string, 0, len(args))
+		for i, arg := range args {
 			if drvPaths[i] != "" {
 				continue
 			}
-			urls = append(urls, arg)
+			u, err := resolveURL(stdio.workdir, arg)
+			if err != nil {
+				return err
+			}
+			urls = append(urls, u.String())
 		}
 		results, err = eval.URLs(ctx, urls, system.Current())
 	}
 	if err != nil {
 		return err
 	}
-	hasMultiple := len(c.Args) > 1 || len(results.DerivationPaths(1)) > 1
+	hasMultiple := len(args) > 1 || len(results.DerivationPaths(1)) > 1
 
 	groupIndex := 1
-	for i := range c.Args {
+	for i := range args {
 		var curr iter.Seq[string]
 		if i < len(drvPaths) && drvPaths[i] != "" {
 			curr = slices.Values(drvPaths[i : i+1])
@@ -135,14 +144,14 @@ func (c *derivationShowCommand) Run(ctx context.Context, g *globalConfig) error 
 			}
 		}
 		for p := range curr {
-			drvBytes, err := showDerivationFile(p, c.JSONFormat)
+			drvBytes, err := showDerivationFile(stdio.abs(p), c.JSONFormat)
 			if err != nil {
 				return err
 			}
 			if !c.JSONFormat && hasMultiple {
 				drvBytes = append(drvBytes, '\n')
 			}
-			if _, err := os.Stdout.Write(drvBytes); err != nil {
+			if _, err := stdio.out.Write(drvBytes); err != nil {
 				return err
 			}
 		}
@@ -302,7 +311,7 @@ func (c *derivationEnvCommand) Validate() error {
 	return nil
 }
 
-func (c *derivationEnvCommand) Run(ctx context.Context, g *globalConfig) error {
+func (c *derivationEnvCommand) Run(ctx context.Context, g *globalConfig, stdio *standardStreams, env envLookupFunc) error {
 	httpClient, cleanup, err := g.newHTTPClient()
 	if err != nil {
 		return err
@@ -310,7 +319,7 @@ func (c *derivationEnvCommand) Run(ctx context.Context, g *globalConfig) error {
 	defer cleanup()
 	storeClient := g.openLocalStore(ctx)
 	defer storeClient.Close()
-	eval, err := c.newEval(g, httpClient, storeClient)
+	eval, err := c.newEval(g, stdio, env, httpClient, storeClient)
 	if err != nil {
 		return err
 	}
@@ -320,11 +329,15 @@ func (c *derivationEnvCommand) Run(ctx context.Context, g *globalConfig) error {
 		}
 	}()
 
+	args, err := c.resolveArgs(stdio.workdir)
+	if err != nil {
+		return err
+	}
 	var results frontend.OutputMap
 	if c.Expression {
-		results, err = eval.Expression(ctx, c.Args[0], system.Current())
+		results, err = eval.Expression(ctx, args[0], system.Current())
 	} else {
-		results, err = eval.URLs(ctx, c.Args, system.Current())
+		results, err = eval.URLs(ctx, args, system.Current())
 	}
 	if err != nil {
 		return err
@@ -343,7 +356,7 @@ func (c *derivationEnvCommand) Run(ctx context.Context, g *globalConfig) error {
 	if err != nil {
 		return err
 	}
-	build, rawBuild, err := waitForBuild(ctx, storeClient, expandResponse.BuildID)
+	build, rawBuild, err := waitForBuild(ctx, storeClient, expandResponse.BuildID, stdio.err)
 	if err != nil {
 		return err
 	}
@@ -362,14 +375,14 @@ func (c *derivationEnvCommand) Run(ctx context.Context, g *globalConfig) error {
 			return fmt.Errorf("%s: %v", drvPath, err)
 		}
 		jsonBytes := append(slices.Clip([]byte(parsed.Expand)), '\n')
-		if _, err := os.Stdout.Write(jsonBytes); err != nil {
+		if _, err := stdio.out.Write(jsonBytes); err != nil {
 			return err
 		}
 		return nil
 	}
 
 	for k, v := range xmaps.Sorted(build.Expand.Env) {
-		if _, err := fmt.Printf("%s=%s\n", k, v); err != nil {
+		if _, err := fmt.Fprintf(stdio.out, "%s=%s\n", k, v); err != nil {
 			return err
 		}
 	}

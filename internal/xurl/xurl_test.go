@@ -9,6 +9,51 @@ import (
 	"testing"
 )
 
+func TestResolveReference(t *testing.T) {
+	tests := []struct {
+		base string
+		ref  string
+		want string
+	}{
+		{"", "", ""},
+		{".", "", "."},
+		{"", ".", "."},
+		{".", ".", "."},
+		{"./", ".", "."},
+		{"a", "x/y", "x/y"},
+		{"a/b", "x/y", "a/x/y"},
+		{"a/b/", "x/y", "a/b/x/y"},
+		{"a/b", "/x/y", "/x/y"},
+		{".", "http://www.example.com", "http://www.example.com/"},
+		{"http://www.example.com/a/b", "x/y", "http://www.example.com/a/x/y"},
+		{"http://www.example.com", "x/y", "http://www.example.com/x/y"},
+		{"http://www.example.com/a/b", "//other.example.com", "http://other.example.com/"},
+		{"a/b?q=foo", "#id", "a/b?q=foo#id"},
+		{"a/b?q=foo", "?#id", "a/b?#id"},
+		{"a/b?q=foo", "?w=42#id", "a/b?w=42#id"},
+		{"a/b?q=foo", "x#id", "a/x#id"},
+		{"/a//..", "../", "/"},
+		{"/a/b/..", "../", "/"},
+	}
+
+	for _, test := range tests {
+		base, err := url.Parse(test.base)
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		ref, err := url.Parse(test.ref)
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		got := ResolveReference(base, ref).String()
+		if got != test.want {
+			t.Errorf("ResolveReference(%s, %s) = %s; want %s", test.base, test.ref, got, test.want)
+		}
+	}
+}
+
 func TestCleanPath(t *testing.T) {
 	tests := []struct {
 		urlstr string
@@ -136,9 +181,7 @@ func FuzzRelURL(f *testing.F) {
 		if err != nil {
 			t.Fatalf("Rel(%v, %v) = _, %v", baseURL, targetURL, err)
 		}
-		// TODO(https://go.dev/issue/80282): ResolveReference's normalization is busted,
-		// so we clean the path ourselves to prevent ResolveReference from having to handle those cases.
-		if got := CleanPath(baseURL).ResolveReference(CleanPath(ref)); !urlsEqual(got, targetURL) {
+		if got := ResolveReference(baseURL, ref); !urlsEqual(got, targetURL) {
 			t.Errorf("Rel(%v, %v) = %v (resolves to %v)", baseURL, targetURL, ref, got)
 		}
 	})

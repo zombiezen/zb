@@ -19,7 +19,6 @@ require (
 	github.com/jotaen/kong-completion v0.0.12
 	github.com/klauspost/compress v1.19.1
 	github.com/tailscale/hujson v0.0.0-20250226034555-ec1d1c113d33
-	go4.org v0.0.0-20230225012048-214862532bf5
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0

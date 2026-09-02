@@ -1,0 +1,2 @@
+zb eval --expression '"Hello, World!"'
+stdout '\AHello, World!\n\z'

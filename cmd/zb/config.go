@@ -15,8 +15,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +32,7 @@ import (
 	"zb.256lights.llc/pkg/internal/backend"
 	"zb.256lights.llc/pkg/internal/fileurl"
 	"zb.256lights.llc/pkg/internal/httpcache"
+	"zb.256lights.llc/pkg/internal/xurl"
 	"zb.256lights.llc/pkg/internal/zbstorehttp"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/zbstore"
@@ -54,15 +55,15 @@ type globalConfig struct {
 
 // defaultGlobalConfig returns a [globalConfig] populated with values
 // based on OS and generic environment variables (e.g. $HOME, $XDG_CACHE_HOME, etc.).
-func defaultGlobalConfig() *globalConfig {
+func defaultGlobalConfig(env envLookupFunc) *globalConfig {
 	g := &globalConfig{
 		Directory:   zbstore.DefaultDirectory(),
-		StoreSocket: filepath.Join(defaultVarDir(), "server.sock"),
+		StoreSocket: filepath.Join(varDir(), "zb", "server.sock"),
 	}
-	if home, err := os.UserHomeDir(); err == nil {
+	if home, err := env.userHomeDir(); err == nil {
 		g.NetrcPath = filepath.Join(home, ".netrc")
 	}
-	if cd := cacheDir(); cd != "" {
+	if cd, err := env.userCacheDir(); err == nil {
 		g.CacheDB = filepath.Join(cd, "zb", "cache.db")
 		g.HTTPCacheDB = filepath.Join(cd, "zb", "http-cache.db")
 	}
@@ -86,8 +87,8 @@ func (g *globalConfig) clone() *globalConfig {
 }
 
 // mergeEnvironment copies environment variable values to [globalConfig] fields.
-func (g *globalConfig) mergeEnvironment() error {
-	if dir := os.Getenv("ZB_STORE_DIR"); dir != "" {
+func (g *globalConfig) mergeEnvironment(env envLookupFunc) error {
+	if dir := env.get("ZB_STORE_DIR"); dir != "" {
 		zbDir, err := zbstore.CleanDirectory(dir)
 		if err != nil {
 			return err
@@ -95,11 +96,11 @@ func (g *globalConfig) mergeEnvironment() error {
 		g.Directory = zbDir
 	}
 
-	if path := os.Getenv("ZB_STORE_SOCKET"); path != "" {
+	if path := env.get("ZB_STORE_SOCKET"); path != "" {
 		g.StoreSocket = path
 	}
 
-	if path := os.Getenv("NETRC"); path != "" {
+	if path := env.get("NETRC"); path != "" {
 		g.NetrcPath = path
 	}
 
@@ -126,66 +127,57 @@ func (g *globalConfig) mergeFiles(paths iter.Seq[string]) error {
 		if err := jsonv2.Unmarshal(jsonData, g, jsonv2.RejectUnknownMembers(false)); err != nil {
 			return fmt.Errorf("read %s: %v", path, err)
 		}
-		g.resolveRelativePaths(filepath.Dir(path), prev)
+		if err := g.resolveRelativePaths(filepath.Dir(path), prev); err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-func (g *globalConfig) resolveRelativePaths(dir string, prev *globalConfig) {
-	resolve := func(path string) string {
-		if !filepath.IsAbs(path) {
-			return filepath.Join(dir, path)
-		}
-		return path
+func (g *globalConfig) resolveRelativePaths(dir string, prev *globalConfig) error {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return err
 	}
-	dirToURL := func() *url.URL {
-		absDir, err := filepath.Abs(dir)
-		if err != nil {
-			return nil
-		}
-		baseURL := fileurl.FromPath(absDir)
-		if !strings.HasSuffix(baseURL.Path, "/") {
-			baseURL.Path += "/"
-		}
-		return baseURL
-	}
+	baseURL := baseDirectoryURL(dir)
 
 	if prev == nil || g.StoreSocket != prev.StoreSocket {
-		g.StoreSocket = resolve(g.StoreSocket)
+		g.StoreSocket = resolvePath(dir, g.StoreSocket)
 	}
 	if prev == nil || g.CacheDB != prev.CacheDB {
-		g.CacheDB = resolve(g.CacheDB)
+		g.CacheDB = resolvePath(dir, g.CacheDB)
 	}
 	if prev == nil || g.HTTPCacheDB != prev.HTTPCacheDB {
-		g.HTTPCacheDB = resolve(g.HTTPCacheDB)
+		g.HTTPCacheDB = resolvePath(dir, g.HTTPCacheDB)
 	}
 	if prev == nil || g.NetrcPath != prev.NetrcPath {
-		g.NetrcPath = resolve(g.NetrcPath)
+		g.NetrcPath = resolvePath(dir, g.NetrcPath)
 	}
 	if prev == nil || !g.Server.Download.Equal(prev.Server.Download) {
-		if baseURL := dirToURL(); baseURL != nil {
-			g.Server.Download = g.Server.Download.resolve(baseURL)
-		}
+		g.Server.Download = g.Server.Download.resolve(baseURL)
 	}
 	if prev == nil || !g.Server.Upload.Equal(prev.Server.Upload) {
-		if baseURL := dirToURL(); baseURL != nil {
-			g.Server.Upload = g.Server.Upload.resolve(baseURL)
-		}
+		g.Server.Upload = g.Server.Upload.resolve(baseURL)
 	}
 	if prev == nil || !slices.Equal(g.Server.KeyFiles, prev.Server.KeyFiles) {
 		// If the previous slice is a prefix of the current slice,
 		// then only resolve the newly added paths.
 		toResolve := g.Server.KeyFiles
-		if len(g.Server.KeyFiles) > len(prev.Server.KeyFiles) &&
-			slices.Equal(g.Server.KeyFiles[:len(prev.Server.KeyFiles)], prev.Server.KeyFiles) {
-			toResolve = g.Server.KeyFiles[len(prev.Server.KeyFiles):]
+		var prevKeyFiles []string
+		if prev != nil {
+			prevKeyFiles = prev.Server.KeyFiles
+		}
+		if len(g.Server.KeyFiles) > len(prevKeyFiles) &&
+			slices.Equal(g.Server.KeyFiles[:len(prevKeyFiles)], prevKeyFiles) {
+			toResolve = g.Server.KeyFiles[len(prevKeyFiles):]
 		}
 
 		for i, path := range toResolve {
-			toResolve[i] = resolve(path)
+			toResolve[i] = resolvePath(dir, path)
 		}
 	}
+	return nil
 }
 
 // UnmarshalJSONFrom unmarshals the configuration object from the JSON decoder,
@@ -595,7 +587,7 @@ func (sc *storeConfig) resolve(base *url.URL) *storeConfig {
 		if err != nil || u.IsAbs() {
 			return sc
 		}
-		props.URL = base.ResolveReference(u).String()
+		props.URL = xurl.ResolveReference(base, u).String()
 		newProps, err := jsonv2.Marshal(props)
 		if err != nil {
 			return sc
@@ -616,9 +608,107 @@ type storeConfigHTTPProperties struct {
 	URL string `json:"url"`
 }
 
-// defaultVarDir returns "/opt/zb/var/zb" on Unix-like systems or `C:\zb\var\zb` on Windows systems.
-func defaultVarDir() string {
-	return filepath.Join(filepath.Dir(string(zbstore.DefaultDirectory())), "var", "zb")
+type envLookupFunc func(key string) (string, bool)
+
+func (f envLookupFunc) lookup(key string) (string, bool) {
+	if f == nil {
+		return "", false
+	}
+	return f(key)
+}
+
+func (f envLookupFunc) get(key string) string {
+	value, _ := f.lookup(key)
+	return value
+}
+
+func (f envLookupFunc) tempDir() string {
+	if runtime.GOOS == "windows" {
+		for _, key := range [...]string{"TMP", "TEMP", "USERPROFILE", "WINDIR"} {
+			if dir := f.get(key); dir != "" {
+				return dir
+			}
+		}
+		return `C:\WINDOWS`
+	}
+	if dir := f.get("TMPDIR"); dir != "" {
+		return dir
+	}
+	return "/tmp"
+}
+
+// userConfigDirs returns a sequence of configuration directory paths
+// in increasing order of preference
+// (i.e. later entries should override earlier entries).
+func (f envLookupFunc) userConfigDirs() iter.Seq[string] {
+	if runtime.GOOS == "windows" {
+		return func(yield func(string) bool) {
+			if dir := f.get("AppData"); dir != "" {
+				yield(dir)
+			}
+		}
+	}
+	return func(yield func(string) bool) {
+		var dirs []string
+		if dirsVar := f.get("XDG_CONFIG_DIRS"); dirsVar != "" {
+			dirs = filepath.SplitList(dirsVar)
+		} else {
+			dirs = []string{"/etc/xdg"}
+		}
+		for _, dir := range slices.Backward(dirs) {
+			if !yield(dir) {
+				return
+			}
+		}
+		dir := f.get("XDG_CONFIG_HOME")
+		if dir == "" {
+			home := f.get("HOME")
+			if home == "" {
+				return
+			}
+			dir = filepath.Join(home, ".config")
+		}
+		yield(dir)
+	}
+}
+
+func (f envLookupFunc) userCacheDir() (string, error) {
+	if runtime.GOOS == "windows" {
+		dir := f.get("LocalAppData")
+		if dir == "" {
+			return "", errors.New("%LocalAppData% is not defined")
+		}
+		return dir, nil
+	}
+	dir := f.get("XDG_CACHE_HOME")
+	if dir == "" {
+		home := f.get("HOME")
+		if home == "" {
+			return "", errors.New("neither $XDG_CACHE_HOME nor $HOME are defined")
+		}
+		dir = filepath.Join(home, ".cache")
+	}
+	return dir, nil
+}
+
+func (f envLookupFunc) userHomeDir() (string, error) {
+	env, enverr := "HOME", "$HOME"
+	switch runtime.GOOS {
+	case "windows":
+		env, enverr = "USERPROFILE", "%userprofile%"
+	case "plan9":
+		env, enverr = "home", "$home"
+	}
+	v := f.get(env)
+	if v == "" {
+		return "", errors.New(enverr + " is not defined")
+	}
+	return v, nil
+}
+
+// varDir returns "/opt/zb/var" on Unix-like systems or `C:\zb\var` on Windows systems.
+func varDir() string {
+	return filepath.Join(filepath.Dir(string(zbstore.DefaultDirectory())), "var")
 }
 
 // singletonProvider returns a function that calls f at most once

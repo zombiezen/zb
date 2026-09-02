@@ -65,7 +65,7 @@ func (c *serveCommand) Signature() string {
 	return `help:"Run a build server."`
 }
 
-func (c *serveCommand) Run(ctx context.Context, g *globalConfig, drain drainSignalChan) error {
+func (c *serveCommand) Run(ctx context.Context, g *globalConfig, stdio *standardStreams, drain drainSignalChan) error {
 	if !g.Directory.IsNative() {
 		return fmt.Errorf("%s cannot be used on this system", g.Directory)
 	}
@@ -76,8 +76,12 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig, drain drainSign
 		return fmt.Errorf("sandboxing requested but unable to use (are you running with admin privileges?)")
 	}
 	allKeyFiles := make([]string, 0, len(g.Server.KeyFiles)+len(c.KeyFiles))
-	allKeyFiles = append(allKeyFiles, g.Server.KeyFiles...)
-	allKeyFiles = append(allKeyFiles, c.KeyFiles...)
+	for _, path := range g.Server.KeyFiles {
+		allKeyFiles = append(allKeyFiles, stdio.abs(path))
+	}
+	for _, path := range c.KeyFiles {
+		allKeyFiles = append(allKeyFiles, stdio.abs(path))
+	}
 	keyring, err := readKeyringFromFiles(allKeyFiles)
 	if err != nil {
 		return err
@@ -92,7 +96,7 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig, drain drainSign
 	if err := os.MkdirAll(filepath.Dir(g.StoreSocket), 0o755); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(c.DBPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(stdio.abs(c.DBPath)), 0o755); err != nil {
 		return err
 	}
 	// TODO(someday): Properly set permissions on the created database.
@@ -123,7 +127,7 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig, drain drainSign
 
 	webHandler := new(webServer)
 	if c.TemplatesDirectory != "" {
-		root, err := os.OpenRoot(c.TemplatesDirectory)
+		root, err := os.OpenRoot(stdio.abs(c.TemplatesDirectory))
 		if err != nil {
 			return err
 		}
@@ -132,7 +136,7 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig, drain drainSign
 		webHandler.templateFiles = ui.TemplateFiles()
 	}
 	if c.StaticDirectory != "" {
-		root, err := os.OpenRoot(c.StaticDirectory)
+		root, err := os.OpenRoot(stdio.abs(c.StaticDirectory))
 		if err != nil {
 			return err
 		}
@@ -157,7 +161,7 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig, drain drainSign
 		BuildDirectory:              c.BuildDir,
 		LogDirectory:                c.LogDirectory,
 		ContentAddressBufferCreator: bytebuffer.TempFileCreator{Pattern: contentAddressTempFilePattern},
-		SandboxPaths:                c.SandboxPaths.toMap(),
+		SandboxPaths:                c.SandboxPaths.toMap(stdio.workdir),
 		DisableSandbox:              !c.Sandbox,
 		BuildUsers:                  buildUsers,
 		AllowKeepFailed:             c.AllowKeepFailed,
@@ -448,10 +452,10 @@ type sandboxPathsFlags struct {
 	ImplicitSystemDeps sets.Set[string]  `kong:"name=implicit-system-dep,placeholder=path,help=Paths to always mount in sandbox (can be passed multiple times)"`
 }
 
-func (flags *sandboxPathsFlags) toMap() map[string]backend.SandboxPath {
+func (flags *sandboxPathsFlags) toMap(workdir string) map[string]backend.SandboxPath {
 	result := make(map[string]backend.SandboxPath)
 	for mappedPath, hostPath := range flags.SandboxPaths {
-		result[mappedPath] = backend.SandboxPath{Path: hostPath}
+		result[mappedPath] = backend.SandboxPath{Path: resolvePath(workdir, hostPath)}
 	}
 	for path := range flags.ImplicitSystemDeps {
 		opts := result[path]

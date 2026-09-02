@@ -71,7 +71,7 @@ func (eval *Eval) pathFunction(ctx context.Context, l *lua.State) (nResults int,
 		return 0, lua.NewTypeError(l, 1, "string or table")
 	}
 
-	p, err = absSourcePath(l, eval.storeDir, p, pcontext)
+	p, err = absSourcePath(l, eval.workDir, eval.storeDir, p, pcontext)
 	if err != nil {
 		return 0, fmt.Errorf("path: %v", err)
 	}
@@ -307,7 +307,7 @@ func (eval *Eval) toFileFunction(ctx context.Context, l *lua.State) (int, error)
 
 // absSourcePath takes a source path passed as an argument from Lua to Go
 // and resolves it relative to the calling function.
-func absSourcePath(l *lua.State, dir zbstore.Directory, path string, context sets.Set[string]) (string, error) {
+func absSourcePath(l *lua.State, workDir string, dir zbstore.Directory, path string, context sets.Set[string]) (string, error) {
 	// Lua guarantees that a call to a native function will never be a tail call,
 	// so we can always get information about the immediate caller.
 	debugInfo := l.Info(1)
@@ -357,10 +357,7 @@ func absSourcePath(l *lua.State, dir zbstore.Directory, path string, context set
 		// TODO(someday): This is intended for --expr evaluation,
 		// but would take place for any chunk loaded with the "load" built-in.
 		// Perhaps an allow-list of sources?
-		path, err := filepath.Abs(filepath.FromSlash(path))
-		if err != nil {
-			return "", fmt.Errorf("resolve path: %w", err)
-		}
+		path := filepath.Join(workDir, filepath.FromSlash(path))
 		if sourceInStore && !pathInStore(path, dir) {
 			return "", fmt.Errorf("resolve path: cannot refer to paths outside %s", dir)
 		}
@@ -417,7 +414,7 @@ func absSourcePathWithDeps(ctx context.Context, l *lua.State, eval *Eval, filena
 		filename = strings.NewReplacer(rewrites...).Replace(filename)
 	}
 
-	return absSourcePath(l, eval.storeDir, filename, filenameContext)
+	return absSourcePath(l, eval.workDir, eval.storeDir, filename, filenameContext)
 }
 
 func pathInStore(path string, dir zbstore.Directory) bool {
