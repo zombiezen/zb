@@ -1,0 +1,71 @@
+# Build derivation.
+[x86_64] [linux] realize ycdx566b81xhh66r3nr0j74mzklfg9s8-fixed.txt.drv
+[aarch64] [linux] realize axr28p1f4xl9wvrkan2bscd1vhw3mq79-fixed.txt.drv
+[aarch64] [macos] realize 8y4cc90xdzfyf6597s1kn4a0lcj8mvz2-fixed.txt.drv
+[x86_64] [windows] realize r2idfvw073q55cr0c3qp3wkd6dylwxb3-fixed.txt.drv
+
+# Verify that we got the fallback object.
+grep '^Hello, World!$' $out
+
+-- vv11m3k1dn3dpzkncbxdc3as0awlzzfm-dep.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "echo -n > \"$out\""
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- 8r2lpl30fiaqkmr110r54sm5mdjfx32b-dep.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [],
+  "x86_64-pc-windows",
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  [
+    "-Command",
+    "\"\" | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- [fallback] 2jpzm50pphiqic1375zvi342x6xx8ran-fixed.txt [sha256:c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31] --
+Hello, World!
+-- ycdx566b81xhh66r3nr0j74mzklfg9s8-fixed.txt.drv --
+Derive(
+  [("out", "/opt/zb/store/2jpzm50pphiqic1375zvi342x6xx8ran-fixed.txt", "sha256", "c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31")],
+  [("/opt/zb/store/vv11m3k1dn3dpzkncbxdc3as0awlzzfm-dep.drv", ["out"])],
+  [],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "exit 1"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- r2idfvw073q55cr0c3qp3wkd6dylwxb3-fixed.txt.drv --
+Derive(
+  [("out", "C:\\zb\\store\\wssgsrjkbxll73kxc4j2acn9n9bkdyiy-fixed.txt", "sha256", "c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31")],
+  [("C:\\zb\\store\\8r2lpl30fiaqkmr110r54sm5mdjfx32b-dep.drv", ["out"])],
+  [],
+  "x86_64-pc-windows",
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  [
+    "-Command",
+    "exit 1"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)

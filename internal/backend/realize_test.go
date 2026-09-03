@@ -523,6 +523,62 @@ func TestRealizeSingleDerivationFallback(t *testing.T) {
 	})
 }
 
+func TestRealizeFixedFallbackRootWithoutRealization(t *testing.T) {
+	t.Parallel()
+
+	ctx := testcontext.New(t)
+	dir := backendtest.NewStoreDirectory(t)
+
+	fallbackStore := new(storetest.Store)
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir: t.TempDir(),
+		Options: Options{
+			Fallback: fallbackStore,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, server, fallbackStore); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, server, data, &scriptTestOptions{
+		fallback: fallbackStore,
+	})
+}
+
+func TestRealizeFixedFallbackWithoutRealization(t *testing.T) {
+	t.Parallel()
+
+	ctx := testcontext.New(t)
+	dir := backendtest.NewStoreDirectory(t)
+
+	fallbackStore := new(storetest.Store)
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir: t.TempDir(),
+		Options: Options{
+			Fallback: fallbackStore,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, server, fallbackStore); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, server, data, &scriptTestOptions{
+		fallback: fallbackStore,
+	})
+}
+
 func TestRealizeWithImproperlyNamedFallback(t *testing.T) {
 	t.Parallel()
 

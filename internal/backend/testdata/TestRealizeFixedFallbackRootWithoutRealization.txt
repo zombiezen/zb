@@ -1,0 +1,72 @@
+# Build derivation.
+[x86_64] [linux] realize bj2brp66gi4y9qpg01ci9y7c40g7vghk-fixed.txt.drv
+[aarch64] [linux] realize qhy161qy4v0c1sm7rr5l7f4j0haycfjh-fixed.txt.drv
+[aarch64] [macos] realize qmgpyak5r8qvvqzybqs09c21a3r96qss-fixed.txt.drv
+[x86_64] [windows] realize vp3cvgj9f50izwasgiyncqxgpr1j8kp2-fixed.txt.drv
+
+# Verify that we got the fallback object.
+grep '^Hello, World!$' $out
+
+-- [fallback] 2jpzm50pphiqic1375zvi342x6xx8ran-fixed.txt [sha256:c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31] --
+Hello, World!
+-- bj2brp66gi4y9qpg01ci9y7c40g7vghk-fixed.txt.drv --
+Derive(
+  [("out", "/opt/zb/store/2jpzm50pphiqic1375zvi342x6xx8ran-fixed.txt", "sha256", "c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31")],
+  [],
+  [],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "exit 1"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- qhy161qy4v0c1sm7rr5l7f4j0haycfjh-fixed.txt.drv --
+Derive(
+  [("out","/opt/zb/store/2jpzm50pphiqic1375zvi342x6xx8ran-fixed.txt","sha256","c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31")],
+  [],
+  [],
+  "aarch64-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "exit 1"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- qmgpyak5r8qvvqzybqs09c21a3r96qss-fixed.txt.drv --
+Derive(
+  [("out","/opt/zb/store/2jpzm50pphiqic1375zvi342x6xx8ran-fixed.txt","sha256","c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31")],
+  [],
+  [],
+  "aarch64-apple-macos",
+  "/bin/sh",
+  [
+    "-c",
+    "exit 1"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- vp3cvgj9f50izwasgiyncqxgpr1j8kp2-fixed.txt.drv --
+Derive(
+  [("out", "C:\\zb\\store\\wssgsrjkbxll73kxc4j2acn9n9bkdyiy-fixed.txt", "sha256", "c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31")],
+  [],
+  [],
+  "x86_64-pc-windows",
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  [
+    "-Command",
+    "exit 1"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+
