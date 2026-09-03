@@ -440,7 +440,7 @@ func TestRealizeSignature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	drvHash, _, err := hashDerivationFromFetcher(ctx, data.objects, zbstore.Null{}, drvPath)
+	drvHash, _, err := hashDerivationFromFetcher(ctx, data.allObjects, zbstore.Null{}, drvPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -496,6 +496,62 @@ func TestRealizeSignature(t *testing.T) {
 }
 
 func TestRealizeSingleDerivationFallback(t *testing.T) {
+	t.Parallel()
+
+	ctx := testcontext.New(t)
+	dir := backendtest.NewStoreDirectory(t)
+
+	fallbackStore := new(storetest.Store)
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir: t.TempDir(),
+		Options: Options{
+			Fallback: fallbackStore,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, server, fallbackStore); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, server, data, &scriptTestOptions{
+		fallback: fallbackStore,
+	})
+}
+
+func TestRealizeFixedFallbackRootWithoutRealization(t *testing.T) {
+	t.Parallel()
+
+	ctx := testcontext.New(t)
+	dir := backendtest.NewStoreDirectory(t)
+
+	fallbackStore := new(storetest.Store)
+	server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+		TempDir: t.TempDir(),
+		Options: Options{
+			Fallback: fallbackStore,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := readTestData(dir, t.Name(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := data.writeTo(ctx, server, fallbackStore); err != nil {
+		t.Fatal(err)
+	}
+	runScriptTest(ctx, t, dir, server, data, &scriptTestOptions{
+		fallback: fallbackStore,
+	})
+}
+
+func TestRealizeFixedFallbackWithoutRealization(t *testing.T) {
 	t.Parallel()
 
 	ctx := testcontext.New(t)
@@ -744,7 +800,7 @@ func TestRealizeUpload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	drvHash, _, err := hashDerivationFromFetcher(ctx, data.objects, uploadStore, drvPath)
+	drvHash, _, err := hashDerivationFromFetcher(ctx, data.allObjects, uploadStore, drvPath)
 	if err != nil {
 		t.Fatal(err)
 	}

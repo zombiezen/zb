@@ -420,11 +420,11 @@ func TestClientObject(t *testing.T) {
 	archive := txtar.Parse([]byte("" +
 		"-- mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt --\n" +
 		"Hello, World!\n"))
-	objects, _, err := storetest.TxtarObjects(zbstore.DefaultUnixDirectory, archive.Files)
+	txtarStore, err := storetest.TxtarObjects(zbstore.DefaultUnixDirectory, archive.Files)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, object := range objects {
+	for _, object := range txtarStore.BlobSlice {
 		object.NARHash = nix.NewHash(nix.SHA256, new(sha256.Sum256(object.NAR))[:])
 	}
 
@@ -453,7 +453,7 @@ func TestClientObject(t *testing.T) {
 			gotInfoParams := new(InfoRequest)
 			id, ok := validateRequest(t, jsonRequest, InfoMethod, gotInfoParams)
 			wantInfoParams := &InfoRequest{
-				Path: objects[0].StorePath,
+				Path: txtarStore.BlobSlice[0].StorePath,
 			}
 			if diff := cmp.Diff(wantInfoParams, gotInfoParams); diff != "" {
 				t.Errorf("params (-want +got):\n%s", diff)
@@ -467,7 +467,7 @@ func TestClientObject(t *testing.T) {
 				"jsonrpc": "2.0",
 				"id":      id,
 				"result": &InfoResponse{
-					Info: NewObjectInfo(objects[0].Info()),
+					Info: NewObjectInfo(txtarStore.BlobSlice[0].Info()),
 				},
 			})
 			if err != nil {
@@ -505,7 +505,7 @@ func TestClientObject(t *testing.T) {
 			gotExportParams := new(ExportRequest)
 			id, exportID, ok := validateExportRequest(t, jsonRequest, gotExportParams)
 			wantExportParams := &ExportRequest{
-				Paths:             []zbstore.Path{objects[0].StorePath},
+				Paths:             []zbstore.Path{txtarStore.BlobSlice[0].StorePath},
 				ExcludeReferences: true,
 			}
 			if diff := cmp.Diff(wantExportParams, gotExportParams); diff != "" {
@@ -517,7 +517,7 @@ func TestClientObject(t *testing.T) {
 
 			exportBuffer := new(bytes.Buffer)
 			exportWriter := zbstore.NewExportWriter(exportBuffer)
-			if err := exportWriter.WriteObject(ctx, objects[0]); err != nil {
+			if err := exportWriter.WriteObject(ctx, txtarStore.BlobSlice[0]); err != nil {
 				t.Error(err)
 			}
 			if err := exportWriter.Close(); err != nil {
@@ -559,21 +559,21 @@ func TestClientObject(t *testing.T) {
 		}
 	}()
 
-	object, err := client.Object(ctx, objects[0].StorePath)
+	object, err := client.Object(ctx, txtarStore.BlobSlice[0].StorePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if diff := cmp.Diff(objects[0].Info(), object.Info()); diff != "" {
+	if diff := cmp.Diff(txtarStore.BlobSlice[0].Info(), object.Info()); diff != "" {
 		t.Errorf("object info (-want +got):\n%s", diff)
 	}
 	gotNAR := new(bytes.Buffer)
 	if err := object.WriteNAR(ctx, gotNAR); err != nil {
 		t.Error("WriteNAR:", err)
 	}
-	if !bytes.Equal(gotNAR.Bytes(), objects[0].NAR) {
+	if !bytes.Equal(gotNAR.Bytes(), txtarStore.BlobSlice[0].NAR) {
 		artifactPath := filepath.Join(t.ArtifactDir(), "got.nar")
 		os.WriteFile(artifactPath, gotNAR.Bytes(), 0o666)
-		os.WriteFile(filepath.Join(t.ArtifactDir(), "want.nar"), objects[0].NAR, 0o666)
+		os.WriteFile(filepath.Join(t.ArtifactDir(), "want.nar"), txtarStore.BlobSlice[0].NAR, 0o666)
 		t.Errorf("WriteNAR data did not match want. Wrote to %s", artifactPath)
 	}
 }

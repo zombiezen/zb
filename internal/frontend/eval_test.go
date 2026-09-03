@@ -287,7 +287,7 @@ func TestStorePath(t *testing.T) {
 		ctx := testcontext.New(t)
 
 		storeDir := backendtest.NewStoreDirectory(t)
-		objects, _, err := storetest.TxtarObjects(storeDir, archive.Files)
+		txtarStore, err := storetest.TxtarObjects(storeDir, archive.Files)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -298,7 +298,7 @@ func TestStorePath(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, object := range objects {
+		for _, object := range txtarStore.BlobSlice {
 			if err := server.WriteObject(ctx, object); err != nil {
 				t.Fatal(err)
 			}
@@ -317,7 +317,7 @@ func TestStorePath(t *testing.T) {
 			}
 		}()
 
-		wantPath := objects[0].StorePath
+		wantPath := txtarStore.BlobSlice[0].StorePath
 		got, err := eval.Expression(ctx, "storePath("+lualex.Quote(string(wantPath))+")", system.Current())
 		if err != nil {
 			t.Fatal(err)
@@ -331,12 +331,12 @@ func TestStorePath(t *testing.T) {
 		ctx := testcontext.New(t)
 
 		storeDir := backendtest.NewStoreDirectory(t)
-		objects, _, err := storetest.TxtarObjects(storeDir, archive.Files)
+		txtarStore, err := storetest.TxtarObjects(storeDir, archive.Files)
 		if err != nil {
 			t.Fatal(err)
 		}
 		fallback := new(storetest.Store)
-		for _, object := range objects {
+		for _, object := range txtarStore.BlobSlice {
 			if err := fallback.WriteObject(ctx, object); err != nil {
 				t.Fatal(err)
 			}
@@ -365,7 +365,7 @@ func TestStorePath(t *testing.T) {
 			}
 		}()
 
-		wantPath := objects[0].StorePath
+		wantPath := txtarStore.BlobSlice[0].StorePath
 		got, err := eval.Expression(ctx, "storePath("+lualex.Quote(string(wantPath))+")", system.Current())
 		if err != nil {
 			t.Fatal(err)

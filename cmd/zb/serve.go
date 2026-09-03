@@ -53,7 +53,7 @@ type serveCommand struct {
 	AllowKeepFailed   bool              `kong:"negatable,default=true,help=Allow user to skip cleanup of failed builds."`
 	CoresPerBuild     int               `kong:"default=${num_cpu},help=Hint to builders for number of concurrent jobs to run"`
 	BuildLogRetention time.Duration     `kong:"default=168h,help=Delete finished build logs after this duration. (Default: ${default})"`
-	SystemdSocket     bool              `kong:"help=Use systemd socket activation"`
+	SystemdSocket     bool              `kong:"name=systemd,help=Use systemd socket activation."`
 
 	WebListenAddress   string `kong:"name=ui,placeholder=[host]:port,help=Serve HTTP for web UI at the given address."`
 	AllowRemoteWeb     bool   `kong:"name=allow-remote-ui,help=Accept non-localhost connections for web UI."`
@@ -116,14 +116,6 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig, stdio *standard
 	if err != nil {
 		return err
 	}
-	var uploadHTTPStore *zbstorehttp.Store
-	switch uploadStore := uploadStore.(type) {
-	case zbstore.Null:
-	case *zbstorehttp.Store:
-		uploadHTTPStore = uploadStore
-	default:
-		return fmt.Errorf("unsupported type %q for upload store", g.Server.Upload.storeType)
-	}
 
 	webHandler := new(webServer)
 	if c.TemplatesDirectory != "" {
@@ -169,7 +161,7 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig, stdio *standard
 		BuildLogRetention:           c.BuildLogRetention,
 		Keyring:                     keyring,
 		Fallback:                    fallbackStore,
-		Writer:                      uploadHTTPStore,
+		Writer:                      uploadStore,
 	})
 	defer func() {
 		if err := backendServer.Close(); err != nil {

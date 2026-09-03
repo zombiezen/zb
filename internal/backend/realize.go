@@ -481,6 +481,15 @@ func (b *builder) gatherRealizationsForDerivation(ctx context.Context, curr zbst
 	b.drvHashes[curr] = drvHash
 
 	drvHashKey := makeHashKey(drvHash)
+	if outputPath, err := node.derivation.OutputPath(zbstore.DefaultDerivationOutputName); err == nil {
+		eqClass := equivalenceClass{
+			drvHashKey: drvHashKey,
+			outputName: unique.Make(zbstore.DefaultDerivationOutputName),
+		}
+		b.realizations[eqClass] = cachedRealization{path: outputPath}
+		return nil
+	}
+
 	wantEqClasses := iter.Seq[derivationPathAndEquivalenceClass](func(yield func(derivationPathAndEquivalenceClass) bool) {
 		for outputName := range node.usedOutputs.All() {
 			dpe := derivationPathAndEquivalenceClass{
@@ -1110,20 +1119,31 @@ func (b *builder) planRealizationsAndFinalizeBuildResult(ctx context.Context, co
 	defer sqlitex.Save(conn)(&err)
 
 	p := b.newPlanner()
-	p.planSeq(ctx, conn, func(yield func(derivationPathAndEquivalenceClass) bool) {
-		for outputName := range state.outputNames.All() {
-			dpe := derivationPathAndEquivalenceClass{
-				drvPath: state.drvPath,
-				equivalenceClass: equivalenceClass{
-					drvHashKey: state.derivationHashKey,
-					outputName: outputName,
-				},
-			}
-			if !yield(dpe) {
-				return
-			}
+	if outputPath, err := state.derivation.OutputPath(zbstore.DefaultDerivationOutputName); err == nil {
+		dpe := derivationPathAndEquivalenceClass{
+			drvPath: state.drvPath,
+			equivalenceClass: equivalenceClass{
+				drvHashKey: state.derivationHashKey,
+				outputName: unique.Make(zbstore.DefaultDerivationOutputName),
+			},
 		}
-	})
+		p.insertFixed(conn, dpe, outputPath)
+	} else {
+		p.planSeq(ctx, conn, func(yield func(derivationPathAndEquivalenceClass) bool) {
+			for outputName := range state.outputNames.All() {
+				dpe := derivationPathAndEquivalenceClass{
+					drvPath: state.drvPath,
+					equivalenceClass: equivalenceClass{
+						drvHashKey: state.derivationHashKey,
+						outputName: outputName,
+					},
+				}
+				if !yield(dpe) {
+					return
+				}
+			}
+		})
+	}
 
 	switch {
 	case p.isAvailableLocally():

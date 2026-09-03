@@ -50,13 +50,14 @@ type zbCommand struct {
 	Config       globalConfig  `kong:"embed"`
 	ExtraConfigs []string      `kong:"name=config,sep=none,placeholder=path,help=Load configuration file(s). (Can be passed multiple times.)"`
 
-	Build      buildCommand      `kong:"cmd"`
-	Eval       evalCommand       `kong:"cmd"`
-	Derivation derivationCommand `kong:"cmd"`
-	Store      storeCommand      `kong:"cmd"`
-	Key        keyCommand        `kong:"cmd"`
-	Serve      serveCommand      `kong:"cmd"`
-	NAR        narCommand        `kong:"cmd"`
+	Build         buildCommand         `kong:"cmd"`
+	Configuration configurationCommand `kong:"cmd,aliases=config"`
+	Eval          evalCommand          `kong:"cmd"`
+	Derivation    derivationCommand    `kong:"cmd"`
+	Store         storeCommand         `kong:"cmd"`
+	Key           keyCommand           `kong:"cmd"`
+	Serve         serveCommand         `kong:"cmd"`
+	NAR           narCommand           `kong:"cmd"`
 
 	Completion kongcompletion.Completion `kong:"cmd"`
 
