@@ -142,12 +142,9 @@ func TestDelete(t *testing.T) {
 }
 
 type testDataArchive struct {
-	filename        string
-	comment         []byte
-	objects         storetest.BlobSlice
-	backendObjects  sets.Set[zbstore.Path]
-	fallbackObjects sets.Set[zbstore.Path]
-	rewrites        map[string]zbstore.Path
+	filename   string
+	comment    []byte
+	allObjects *storetest.TxtarStore
 }
 
 // readTestData parses a txtar file.
@@ -166,31 +163,6 @@ func readTestData(dir zbstore.Directory, name string, fileSubstitutions map[stri
 	if err != nil {
 		return nil, err
 	}
-
-	backendObjectNames := make(sets.Set[string], len(archive.Files))
-	fallbackObjectNames := make(sets.Set[string], len(archive.Files))
-	for i := range archive.Files {
-		file := &archive.Files[i]
-		var labels []string
-		labels, file.Name = parseFileNameLabels(file.Name)
-		base, _, _ := strings.Cut(file.Name, "/")
-		if len(labels) == 0 {
-			backendObjectNames.Add(base)
-		} else {
-			for _, label := range labels {
-				switch label {
-				case "null":
-				case "backend":
-					backendObjectNames.Add(base)
-				case "fallback":
-					fallbackObjectNames.Add(base)
-				default:
-					return nil, fmt.Errorf("%s: unknown label [%s] on %s", filename, label, file.Name)
-				}
-			}
-		}
-	}
-
 	if len(fileSubstitutions) > 0 {
 		replacer := newReplacer(maps.All(fileSubstitutions))
 		for i := range archive.Files {
@@ -203,72 +175,44 @@ func readTestData(dir zbstore.Directory, name string, fileSubstitutions map[stri
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v", filename, err)
 	}
-	backendObjects := make(sets.Set[zbstore.Path], len(txtarStore.BlobSlice))
-	for name := range backendObjectNames {
-		backendObjects.Add(txtarStore.Rewrites[name])
-	}
-	fallbackObjects := make(sets.Set[zbstore.Path], len(txtarStore.BlobSlice))
-	for name := range fallbackObjectNames {
-		fallbackObjects.Add(txtarStore.Rewrites[name])
-	}
 	return &testDataArchive{
-		filename:        filename,
-		comment:         archive.Comment,
-		objects:         txtarStore.BlobSlice,
-		backendObjects:  backendObjects,
-		fallbackObjects: fallbackObjects,
-		rewrites:        txtarStore.Rewrites,
+		filename:   filename,
+		comment:    archive.Comment,
+		allObjects: txtarStore,
 	}, nil
 }
 
 func (data *testDataArchive) writeTo(ctx context.Context, backend, fallback zbstore.ObjectWriter) error {
-	for _, obj := range data.objects {
-		if data.backendObjects.Has(obj.StorePath) {
-			if err := backend.WriteObject(ctx, obj); err != nil {
+	for _, object := range data.allObjects.BlobSlice {
+		labels := data.allObjects.Labels[object.StorePath]
+		if len(labels) == 0 {
+			if err := backend.WriteObject(ctx, object); err != nil {
 				return err
 			}
+			continue
 		}
-	}
-
-	if data.fallbackObjects.Len() > 0 {
-		if fallback == nil {
-			return fmt.Errorf("test file contains [fallback] objects, but no fallback provided")
-		}
-		for _, obj := range data.objects {
-			if data.fallbackObjects.Has(obj.StorePath) {
-				if err := fallback.WriteObject(ctx, obj); err != nil {
+		for _, label := range labels {
+			switch label {
+			case "null":
+			case "backend":
+				if err := backend.WriteObject(ctx, object); err != nil {
 					return err
 				}
+			case "fallback":
+				if fallback == nil {
+					return fmt.Errorf("test file contains [fallback] objects, but no fallback provided")
+				}
+				if err := fallback.WriteObject(ctx, object); err != nil {
+					return err
+				}
+			default:
+				filename, _ := data.allObjects.OriginalObjectName(object.StorePath)
+				return fmt.Errorf("%s: unknown label [%s]", filename, label)
 			}
 		}
 	}
 
 	return nil
-}
-
-func parseFileNameLabels(name string) ([]string, string) {
-	var labels []string
-	for {
-		var hasLabel bool
-		name, hasLabel = strings.CutPrefix(name, "[")
-		if !hasLabel {
-			return labels, name
-		}
-		var label string
-		label, name, _ = strings.Cut(name, "]")
-		labels = append(labels, label)
-		name = strings.TrimLeft(name, " \t")
-	}
-}
-
-func reverseLookup[K any, V comparable](m iter.Seq2[K, V], want V) (K, bool) {
-	for k, v := range m {
-		if v == want {
-			return k, true
-		}
-	}
-	var zero K
-	return zero, false
 }
 
 // scriptTestOptions is the set of optional arguments to [runScripTest].
@@ -311,8 +255,7 @@ func runScriptTest(ctx context.Context, tb testing.TB, dir zbstore.Directory, se
 		tb:         tb,
 		directory:  dir,
 		server:     server,
-		allObjects: data.objects,
-		rewrites:   data.rewrites,
+		allObjects: data.allObjects,
 		fallback:   opts.fallback,
 	}
 	sc.addTo(engine.Cmds)
@@ -398,8 +341,7 @@ type storeCommands struct {
 	tb         testing.TB
 	directory  zbstore.Directory
 	server     *Server
-	allObjects zbstore.Store
-	rewrites   map[string]zbstore.Path
+	allObjects *storetest.TxtarStore
 	fallback   realizationFetchWriter
 }
 
@@ -416,12 +358,12 @@ func (sc *storeCommands) addTo(cmds map[string]script.Cmd) {
 }
 
 func (sc *storeCommands) newStoreReplacer() *strings.Replacer {
-	return newReplacer(maps.All(sc.rewrites))
+	return newReplacer(maps.All(sc.allObjects.Rewrites))
 }
 
 func (sc *storeCommands) newRealReplacer() *strings.Replacer {
-	replacements := make([]string, 0, len(sc.rewrites)*2)
-	for fileName, path := range sc.rewrites {
+	replacements := make([]string, 0, len(sc.allObjects.Rewrites)*2)
+	for fileName, path := range sc.allObjects.Rewrites {
 		replacements = append(replacements, fileName, path.Base())
 	}
 	return strings.NewReplacer(replacements...)
@@ -685,7 +627,7 @@ func (sc *storeCommands) runRealize(state *script.State, args ...string) (script
 				continue
 			}
 			var hasRewrite bool
-			logFile.Name, hasRewrite = reverseLookup(maps.All(sc.rewrites), result.DrvPath)
+			logFile.Name, hasRewrite = sc.allObjects.OriginalObjectName(result.DrvPath)
 			if !hasRewrite {
 				logFile.Name = result.DrvPath.Base()
 			}

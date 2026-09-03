@@ -440,7 +440,7 @@ func TestRealizeSignature(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	drvHash, _, err := hashDerivationFromFetcher(ctx, data.objects, zbstore.Null{}, drvPath)
+	drvHash, _, err := hashDerivationFromFetcher(ctx, data.allObjects, zbstore.Null{}, drvPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -744,7 +744,7 @@ func TestRealizeUpload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	drvHash, _, err := hashDerivationFromFetcher(ctx, data.objects, uploadStore, drvPath)
+	drvHash, _, err := hashDerivationFromFetcher(ctx, data.allObjects, uploadStore, drvPath)
 	if err != nil {
 		t.Fatal(err)
 	}
