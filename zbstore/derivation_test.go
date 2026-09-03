@@ -41,9 +41,7 @@ func derivationMarshalTests(tb testing.TB) []derivationMarshalTest {
 					"outputHashMode": "recursive",
 					"system":         "x86_64-linux",
 				},
-				Outputs: map[string]*DerivationOutputType{
-					"out": RecursiveFileFloatingCAOutput(nix.SHA256),
-				},
+				Outputs: DefaultFloatingOutput(),
 			},
 
 			want: readTestdata(tb, "cs4n5mbm46xwzb9yxm983gzqh0k5b2hp-hello.drv"),
@@ -115,9 +113,7 @@ func derivationMarshalTests(tb testing.TB) []derivationMarshalTest {
 				InputSources: *sets.NewSorted[Path](
 					"/nix/store/lphxcbw5wqsjskipaw1fb8lcf6pm6ri6-builder.sh",
 				),
-				Outputs: map[string]*DerivationOutputType{
-					"out": FixedCAOutput(nix.FlatFileContentAddress(mustParseHash(tb, "sha256:f01d58cd6d9d77fbdca9eb4bbd5ead1988228fdb73d6f7a201f5f8d6b118b469"))),
-				},
+				Outputs: FixedOutput(nix.FlatFileContentAddress(mustParseHash(tb, "sha256:f01d58cd6d9d77fbdca9eb4bbd5ead1988228fdb73d6f7a201f5f8d6b118b469"))),
 			},
 
 			want: readTestdata(tb, "0006yk8jxi0nmbz09fq86zl037c1wx9b-automake-1.16.5.tar.xz.drv"),
@@ -175,7 +171,7 @@ func TestDerivationExport(t *testing.T) {
 func TestParseDerivation(t *testing.T) {
 	derivationCompareOptions := cmp.Options{
 		cmpopts.EquateEmpty(),
-		cmp.AllowUnexported(DerivationOutputType{}),
+		cmp.AllowUnexported(DerivationOutputs{}),
 		transformSortedSet[Path](),
 		transformSortedSet[string](),
 	}
@@ -193,50 +189,43 @@ func TestParseDerivation(t *testing.T) {
 	}
 }
 
-func TestDerivationOutputPath(t *testing.T) {
+func TestDerivationFixedOutputPath(t *testing.T) {
 	tests := []struct {
-		name       string
-		drvName    string
-		outputName string
-		outputType *DerivationOutputType
-		want       Path
+		name           string
+		drvName        string
+		contentAddress ContentAddress
+		want           Path
 	}{
 		{
-			name:       "Text",
-			drvName:    "hello.txt",
-			outputName: "out",
-			outputType: FixedCAOutput(nix.TextContentAddress(hashString(nix.SHA256, "Hello, World!\n"))),
-			want:       "/nix/store/q4dz47g15qmlsm01aijr737w8avkaac6-hello.txt",
+			name:           "Text",
+			drvName:        "hello.txt",
+			contentAddress: nix.TextContentAddress(hashString(nix.SHA256, "Hello, World!\n")),
+			want:           "/nix/store/q4dz47g15qmlsm01aijr737w8avkaac6-hello.txt",
 		},
 		{
-			name:       "FlatFile",
-			drvName:    "hello.txt",
-			outputName: "out",
-			outputType: FixedCAOutput(nix.FlatFileContentAddress(hashString(nix.SHA256, "Hello, World!\n"))),
-			want:       "/nix/store/22lrzcnq9ch2f3sz8d2idrm9gn72vcy2-hello.txt",
+			name:           "FlatFile",
+			drvName:        "hello.txt",
+			contentAddress: nix.FlatFileContentAddress(hashString(nix.SHA256, "Hello, World!\n")),
+			want:           "/nix/store/22lrzcnq9ch2f3sz8d2idrm9gn72vcy2-hello.txt",
 		},
 		{
-			name:       "RecursiveFile",
-			drvName:    "hello.txt",
-			outputName: "out",
-			outputType: FixedCAOutput(nix.RecursiveFileContentAddress(helloNARHash(t))),
-			want:       "/nix/store/8dh7w49x7r3xkwz39vavcq6znygmzrp0-hello.txt",
+			name:           "RecursiveFile",
+			drvName:        "hello.txt",
+			contentAddress: nix.RecursiveFileContentAddress(helloNARHash(t)),
+			want:           "/nix/store/8dh7w49x7r3xkwz39vavcq6znygmzrp0-hello.txt",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			drv := &Derivation{
-				Dir:  "/nix/store",
-				Name: test.drvName,
-				Outputs: map[string]*DerivationOutputType{
-					test.outputName: test.outputType,
-				},
+				Dir:     "/nix/store",
+				Name:    test.drvName,
+				Outputs: FixedOutput(test.contentAddress),
 			}
-			got, err := drv.OutputPath(test.outputName)
+			got, err := drv.FixedOutputPath()
 			wantOK := test.want != ""
 			if got != test.want || (err == nil) != wantOK {
-				t.Errorf("drv.OutputPath(%q) = %q, %v; want %q, %t",
-					test.outputName, got, err, test.want, wantOK)
+				t.Errorf("drv.FixedOutputPath() = %q, %v; want %q, %t", got, err, test.want, wantOK)
 			}
 		})
 	}

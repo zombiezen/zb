@@ -27,6 +27,9 @@ type ContentAddress = nix.ContentAddress
 // FixedCAOutputPath computes the path of a store object
 // with the given directory, name, content address, and reference set.
 func FixedCAOutputPath(dir Directory, name string, ca nix.ContentAddress, refs References) (Path, error) {
+	if name == "" {
+		return "", fmt.Errorf("compute fixed output path: name empty")
+	}
 	if err := ValidateContentAddress(ca, refs); err != nil {
 		return "", fmt.Errorf("compute fixed output path for %s: %v", name, err)
 	}

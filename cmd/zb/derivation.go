@@ -330,7 +330,7 @@ func marshalDerivationJSON(drvPath string, drv *zbstore.Derivation) ([]byte, err
 			}
 		}),
 		Placeholders: maps.Collect(func(yield func(string, jsonOutputReference) bool) {
-			for outputName := range drv.Outputs {
+			for outputName := range drv.Outputs.Names() {
 				placeholder := zbstore.HashPlaceholder(outputName)
 				jref := jsonOutputReference{
 					DrvPath:    drvPath,

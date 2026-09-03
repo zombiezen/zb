@@ -71,20 +71,14 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 	switch typ := l.RawField(1, "outputHashMode"); typ {
 	case lua.TypeNil:
 		if !h.IsZero() {
-			drv.Outputs = map[string]*zbstore.DerivationOutputType{
-				zbstore.DefaultDerivationOutputName: zbstore.FixedCAOutput(nix.FlatFileContentAddress(h)),
-			}
+			drv.Outputs = zbstore.FixedOutput(nix.FlatFileContentAddress(h))
 		}
 	case lua.TypeString:
 		switch mode, _ := l.ToString(-1); mode {
 		case "flat":
-			drv.Outputs = map[string]*zbstore.DerivationOutputType{
-				zbstore.DefaultDerivationOutputName: zbstore.FixedCAOutput(nix.FlatFileContentAddress(h)),
-			}
+			drv.Outputs = zbstore.FixedOutput(nix.FlatFileContentAddress(h))
 		case "recursive":
-			drv.Outputs = map[string]*zbstore.DerivationOutputType{
-				zbstore.DefaultDerivationOutputName: zbstore.FixedCAOutput(nix.RecursiveFileContentAddress(h)),
-			}
+			drv.Outputs = zbstore.FixedOutput(nix.RecursiveFileContentAddress(h))
 		default:
 			return 0, fmt.Errorf("outputHashMode argument: invalid mode %q", mode)
 		}
@@ -95,9 +89,7 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 
 	if h.IsZero() {
 		// TODO(someday): Multiple outputs.
-		drv.Outputs = map[string]*zbstore.DerivationOutputType{
-			zbstore.DefaultDerivationOutputName: zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-		}
+		drv.Outputs = zbstore.DefaultFloatingOutput()
 	}
 
 	// Start a copy of the table.
@@ -171,18 +163,17 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 		l.Pop(1)
 	}
 
-	for outputName, outType := range drv.Outputs {
-		switch {
-		case outType.IsFloating():
+	var fixedOutputPath zbstore.Path
+	if drv.Outputs.IsFixed() {
+		var err error
+		fixedOutputPath, err = drv.FixedOutputPath()
+		if err != nil {
+			return 0, fmt.Errorf("derivation: %v", err)
+		}
+		drv.Env[zbstore.DefaultDerivationOutputName] = string(fixedOutputPath)
+	} else {
+		for outputName := range drv.Outputs.Names() {
 			drv.Env[outputName] = zbstore.HashPlaceholder(outputName)
-		case outType.IsFixed():
-			p, err := drv.OutputPath(outputName)
-			if err != nil {
-				panic(err)
-			}
-			drv.Env[outputName] = string(p)
-		default:
-			panic(outputName + " has an unhandled output type")
 		}
 	}
 	obj, err := drv.Derivation.Export(nix.SHA256)
@@ -198,21 +189,15 @@ func (eval *Eval) derivationFunction(ctx context.Context, l *lua.State) (int, er
 	if err := l.SetField(ctx, tableCopyIndex, "drvPath"); err != nil {
 		return 0, fmt.Errorf("derivation: %v", err)
 	}
-	for outputName, outType := range drv.Outputs {
+	for outputName := range drv.Outputs.Names() {
 		var placeholder string
-		switch {
-		case outType.IsFloating():
+		if drv.Outputs.IsFixed() {
+			placeholder = string(fixedOutputPath)
+		} else {
 			placeholder = zbstore.UnknownCAOutputPlaceholder(zbstore.OutputReference{
 				DrvPath:    drv.path,
 				OutputName: zbstore.DefaultDerivationOutputName,
 			})
-		case outType.IsFixed():
-			// TODO(someday): We already computed this earlier.
-			p, err := drv.OutputPath(outputName)
-			if err != nil {
-				panic(err)
-			}
-			placeholder = string(p)
 		}
 		ref := zbstore.OutputReference{
 			DrvPath:    drv.path,

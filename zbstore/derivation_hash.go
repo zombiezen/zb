@@ -5,9 +5,35 @@ package zbstore
 
 import (
 	"fmt"
+	"maps"
 
 	"zombiezen.com/go/nix"
 )
+
+// SHA256RealizationHash computes the hash for the given derivation
+// based on the realizations of its input derivations.
+// This hash is intended for use in [RealizationOutputReference].
+// If realization is nil, then SHA256RealizationHash will return an error
+// if the derivation requires other realizations to compute its hash.
+func (drv *Derivation) SHA256RealizationHash(realization func(ref OutputReference) (Path, error)) (nix.Hash, error) {
+	if drv.Outputs.IsFixed() {
+		return hashDrvFixed(drv)
+	}
+
+	if realization == nil {
+		realization = func(ref OutputReference) (Path, error) {
+			return "", fmt.Errorf("missing realization for %v", ref)
+		}
+	}
+	rewrites, err := derivationInputRewrites(drv, realization)
+	if err != nil {
+		return nix.Hash{}, fmt.Errorf("hash derivation: %v", err)
+	}
+	expandedDrv := drv.ReplaceStrings(newReplacer(maps.All(rewrites)))
+	expandedDrv.InputDerivations = nil
+	expandedDrv.InputSources.AddSeq(maps.Values(rewrites))
+	return hashDrvFloating(expandedDrv)
+}
 
 // derivationInputRewrites returns a substitution map
 // of output placeholders to realization paths.
@@ -27,11 +53,11 @@ func derivationInputRewrites(drv *Derivation, realization func(ref OutputReferen
 
 // hashDrvFixed computes the equivalence class for a fixed-output derivation.
 func hashDrvFixed(drv *Derivation) (nix.Hash, error) {
-	ca, isFixed := drv.Outputs[DefaultDerivationOutputName].FixedCA()
-	if !isFixed || len(drv.Outputs) != 1 {
+	ca, isFixed := drv.Outputs.FixedContentAddress()
+	if !isFixed {
 		return nix.Hash{}, fmt.Errorf("hash derivation: not fixed")
 	}
-	outputPath, err := drv.OutputPath(DefaultDerivationOutputName)
+	outputPath, err := drv.FixedOutputPath()
 	if err != nil {
 		return nix.Hash{}, fmt.Errorf("hash derivation: %v", err)
 	}

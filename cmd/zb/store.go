@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"html"
 	"io"
-	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -344,7 +343,7 @@ func (gb *graphBuilder) addDerivation(name string, path zbstore.Path, refs *sets
 	if gb.visited.Has(cmp.Or(dot.ID(path), dot.ID(name))) {
 		return
 	}
-	node := gb.newNode(name, path, sets.CollectSorted(maps.Keys(drv.Outputs)))
+	node := gb.newNode(name, path, sets.CollectSorted(drv.Outputs.Names()))
 
 	for ref := range drv.InputDerivationOutputs() {
 		gb.graph.Statements = append(gb.graph.Statements, &dot.EdgeStatement{

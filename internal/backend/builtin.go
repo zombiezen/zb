@@ -63,7 +63,7 @@ func fetchURL(ctx context.Context, drv *zbstore.Derivation, realStoreDir string)
 		return fmt.Errorf("missing %s environment variable", zbstore.DefaultDerivationOutputName)
 	}
 	outputPath = strings.ReplaceAll(outputPath, string(drv.Dir), realStoreDir)
-	if !drv.Outputs[zbstore.DefaultDerivationOutputName].IsFixed() {
+	if !drv.Outputs.IsFixed() {
 		return fmt.Errorf("output is not fixed")
 	}
 	executable := drv.Env["executable"] != ""
