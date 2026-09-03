@@ -20,63 +20,158 @@ import (
 	"zombiezen.com/go/nix/nar"
 )
 
-// TxtarObjects converts the source files and .drv files in a txtar archive to a slice of [*zbstore.Blob],
+// TxtarStore is a collection of objects parsed by [TxtarObjects].
+type TxtarStore struct {
+	BlobSlice
+	// Rewrites is a map of store object names as they appear in the txtar file
+	// to their resulting store path.
+	Rewrites map[string]zbstore.Path
+	// Labels is a set of optional strings attached to an object.
+	// They must appear before the first file in an object enclosed in brackets
+	// (e.g. "[foo]").
+	Labels map[zbstore.Path][]string
+}
+
+// OriginalObjectName returns the placeholder store object name in the txtar file
+// for a [zbstore.Path].
+func (store *TxtarStore) OriginalObjectName(path zbstore.Path) (filename string, ok bool) {
+	if store == nil {
+		return "", false
+	}
+	for k, v := range store.Rewrites {
+		if v == path {
+			return k, true
+		}
+	}
+	return "", false
+}
+
+// TxtarObjects converts the source files and .drv files in a txtar archive to a [BlobSlice],
 // rewriting their paths to the named directory.
-// TxtarObjects also returns a map of file names to store paths.
-func TxtarObjects(dir zbstore.Directory, files []txtar.File) (BlobSlice, map[string]zbstore.Path, error) {
-	objects := make([]*zbstore.Blob, 0, len(files))
-	rewrites := make(map[string]zbstore.Path)
+func TxtarObjects(dir zbstore.Directory, files []txtar.File) (*TxtarStore, error) {
+	result := &TxtarStore{
+		BlobSlice: make(BlobSlice, 0, len(files)),
+		Rewrites:  make(map[string]zbstore.Path),
+		Labels:    make(map[zbstore.Path][]string),
+	}
 
 	for objectFiles := range groupFilesByObject(files) {
-		objectName, _, hasSubpath := strings.Cut(objectFiles[0].Name, "/")
-		fakePath, err := dir.Object(objectName)
+		labels, firstPath, fixedHash, err := parseFilename(objectFiles[0].Name)
 		if err != nil {
-			return objects, rewrites, err
+			return result, err
 		}
+		if digest, ok := firstPath.digest(); ok {
+			for name := range result.Rewrites {
+				if other, _ := txtarPath(name).digest(); other == digest {
+					currObjectName := firstPath.objectName()
+					if name == currObjectName {
+						return result, fmt.Errorf("duplicate object %s", name)
+					}
+					return result, fmt.Errorf("%s and %s have the same digest", name, currObjectName)
+				}
+			}
+		}
+		firstFileData := cleanFileData(objectFiles[0].Data)
 
-		// Special case: derivations.
-		if !hasSubpath && strings.HasSuffix(objectName, zbstore.DerivationExt) {
-			drv, err := rewriteTxtarDerivation(dir, objectFiles[0], maps.All(rewrites))
+		switch {
+		case !fixedHash.IsZero():
+			// Special case: fixed-output file.
+			if !firstPath.isSingleFile() || len(objectFiles) != 1 {
+				return result, fmt.Errorf("%s: fixed output objects must be a single file", firstPath)
+			}
+			h := nix.NewHasher(fixedHash.Type())
+			h.Write(firstFileData)
+			if got := h.SumHash(); !got.Equal(fixedHash) {
+				return result, fmt.Errorf("%s: computed hash is %v instead of %v", firstPath, got, fixedHash)
+			}
+
+			buf := new(bytes.Buffer)
+			nw := nar.NewWriter(buf)
+			var emptyRewrites iter.Seq2[string, zbstore.Path] = func(yield func(string, zbstore.Path) bool) {}
+			if err := copyTxtarToNAR(nw, firstPath, firstFileData, nil, emptyRewrites); err != nil {
+				return result, err
+			}
+			ca := nix.FlatFileContentAddress(fixedHash)
+			path, err := zbstore.FixedCAOutputPath(dir, firstPath.name(), ca, zbstore.References{})
 			if err != nil {
-				return objects, rewrites, fmt.Errorf("rewrite %s: %v", objectName, err)
+				return result, fmt.Errorf("%s: %v", firstPath, err)
+			}
+			if err := nw.Close(); err != nil {
+				return result, fmt.Errorf("%s: %v", firstPath, err)
+			}
+			obj := &zbstore.Blob{
+				NAR: buf.Bytes(),
+				ExportTrailer: zbstore.ExportTrailer{
+					StorePath:      path,
+					ContentAddress: ca,
+				},
+			}
+			if err := addToTxtarStore(result, firstPath.objectName(), obj, labels); err != nil {
+				return result, err
+			}
+			continue
+
+		case firstPath.isSingleFile() && len(objectFiles) == 1 && strings.HasSuffix(firstPath.objectName(), zbstore.DerivationExt):
+			// Special case: derivations.
+			drvName := strings.TrimSuffix(firstPath.name(), zbstore.DerivationExt)
+			drv, err := rewriteTxtarDerivation(dir, drvName, firstFileData, maps.All(result.Rewrites))
+			if err != nil {
+				return result, fmt.Errorf("rewrite %s: %v", firstPath, err)
 			}
 			obj, err := drv.Export(nix.SHA256)
 			if err != nil {
-				return objects, rewrites, fmt.Errorf("rewrite %s: %v", objectName, err)
+				return result, fmt.Errorf("rewrite %s: %v", firstPath, err)
 			}
-			objects = append(objects, obj)
-			rewrites[objectName] = obj.StorePath
+			if err := addToTxtarStore(result, firstPath.objectName(), obj, labels); err != nil {
+				return result, err
+			}
 			continue
 		}
 
 		buf := new(bytes.Buffer)
 		nw := nar.NewWriter(buf)
 		refs := new(sets.Sorted[zbstore.Path])
-		for _, file := range objectFiles {
-			if err := copyTxtarToNAR(nw, refs, file, maps.All(rewrites)); err != nil {
-				return objects, rewrites, err
+		if err := copyTxtarToNAR(nw, firstPath, firstFileData, refs, maps.All(result.Rewrites)); err != nil {
+			return result, err
+		}
+		for _, other := range objectFiles[1:] {
+			otherLabels, otherFilename, otherFixedHash, err := parseFilename(other.Name)
+			if err != nil {
+				return result, err
+			}
+			if len(otherLabels) > 0 {
+				return result, fmt.Errorf("unexpected labels on %s", otherFilename)
+			}
+			if !otherFixedHash.IsZero() {
+				return result, fmt.Errorf("unexpected hash on %s", otherFilename)
+			}
+			otherData := cleanFileData(other.Data)
+			err = copyTxtarToNAR(nw, otherFilename, otherData, refs, maps.All(result.Rewrites))
+			if err != nil {
+				return result, err
 			}
 		}
 		if err := nw.Close(); err != nil {
-			return objects, rewrites, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
+			return result, fmt.Errorf("%s: %v", firstPath.objectName(), err)
 		}
 
 		obj := &zbstore.Blob{NAR: buf.Bytes()}
-		ca, analysis, err := zbstore.SourceSHA256ContentAddress(
-			bytes.NewReader(obj.NAR),
-			&zbstore.ContentAddressOptions{Digest: fakePath.Digest()},
-		)
+		caOptions := new(zbstore.ContentAddressOptions)
+		if digest, ok := firstPath.digest(); ok {
+			caOptions.Digest = digest
+		}
+		ca, analysis, err := zbstore.SourceSHA256ContentAddress(bytes.NewReader(obj.NAR), caOptions)
 		if err != nil {
-			return objects, rewrites, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
+			return result, fmt.Errorf("%s: %v", firstPath.objectName(), err)
 		}
 		obj.ContentAddress = ca
 		storeRefs := zbstore.References{
 			Self:   analysis.HasSelfReferences(),
 			Others: *refs,
 		}
-		obj.StorePath, err = zbstore.FixedCAOutputPath(dir, fakePath.Name(), obj.ContentAddress, storeRefs)
+		obj.StorePath, err = zbstore.FixedCAOutputPath(dir, firstPath.name(), obj.ContentAddress, storeRefs)
 		if err != nil {
-			return objects, rewrites, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
+			return result, err
 		}
 		obj.References = *storeRefs.ToSet(obj.StorePath)
 		newDigest := obj.StorePath.Digest()
@@ -84,25 +179,29 @@ func TxtarObjects(dir zbstore.Directory, files []txtar.File) (BlobSlice, map[str
 			readStart, readEnd := rewrite.ReadRange()
 			replacement, err := rewrite.Rewrite(newDigest, bytes.NewReader(obj.NAR[readStart:readEnd]))
 			if err != nil {
-				return objects, rewrites, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
+				return result, fmt.Errorf("%s: %v", firstPath.objectName(), err)
 			}
 			copy(obj.NAR[rewrite.WriteOffset():], replacement)
 		}
-		objects = append(objects, obj)
-		rewrites[objectName] = obj.StorePath
+		if err := addToTxtarStore(result, firstPath.objectName(), obj, labels); err != nil {
+			return result, err
+		}
 	}
-	return objects, rewrites, nil
+	return result, nil
 }
 
 func groupFilesByObject(files []txtar.File) iter.Seq[[]txtar.File] {
 	return func(yield func([]txtar.File) bool) {
 		for i := 0; i < len(files); {
 			firstFileIndex := i
-			objectName, _, hasSubpath := strings.Cut(files[firstFileIndex].Name, "/")
+			_, firstPath, _, err := parseFilename(files[firstFileIndex].Name)
 			i++
-			if hasSubpath {
-				prefix := files[firstFileIndex].Name[:len(objectName)+len("/")]
-				for i < len(files) && strings.HasPrefix(files[i].Name, prefix) {
+			if err == nil && !firstPath.isSingleFile() {
+				for i < len(files) {
+					_, curr, _, err := parseFilename(files[i].Name)
+					if err != nil || curr.objectName() != firstPath.objectName() {
+						break
+					}
 					i++
 				}
 			}
@@ -113,54 +212,145 @@ func groupFilesByObject(files []txtar.File) iter.Seq[[]txtar.File] {
 	}
 }
 
-func copyTxtarToNAR(nw *nar.Writer, refs *sets.Sorted[zbstore.Path], file txtar.File, rewrites iter.Seq2[string, zbstore.Path]) error {
-	_, subpath, _ := strings.Cut(file.Name, "/")
-	h := &nar.Header{Path: subpath}
-	data := bytes.ReplaceAll(file.Data, []byte("\r"), nil) // Convert CRLF to LF.
-	isDir := strings.HasSuffix(file.Name, "/")
-	if isDir {
+func parseFilename(name string) (labels []string, path txtarPath, fixedHash nix.Hash, err error) {
+	name = strings.TrimSpace(name)
+	for {
+		var hasLabel bool
+		name, hasLabel = strings.CutPrefix(name, "[")
+		if !hasLabel {
+			break
+		}
+		var label string
+		var labelEnds bool
+		label, name, labelEnds = strings.Cut(name, "]")
+		if !labelEnds {
+			return nil, "", nix.Hash{}, fmt.Errorf("unclosed label %s", label)
+		}
+		labels = append(labels, label)
+		name = strings.TrimLeft(name, " \t")
+	}
+
+	originalName := name
+	name, hasFixedHash := strings.CutSuffix(name, "]")
+	if hasFixedHash {
+		nameEnd := strings.LastIndex(name, "[")
+		if nameEnd == -1 {
+			return nil, "", nix.Hash{}, fmt.Errorf("invalid file name %s", originalName)
+		}
+		hashString := name[nameEnd+len("["):]
+		name = name[:nameEnd]
+		var err error
+		fixedHash, err = nix.ParseHash(hashString)
+		if err != nil {
+			return nil, "", nix.Hash{}, err
+		}
+		name = strings.TrimRight(name, " \t")
+	}
+
+	return labels, txtarPath(name), fixedHash, nil
+}
+
+func addToTxtarStore(store *TxtarStore, originalName string, object *zbstore.Blob, labels []string) error {
+	if otherName, exists := store.OriginalObjectName(object.StorePath); exists {
+		if otherName == originalName {
+			return fmt.Errorf("duplicate object %s", originalName)
+		}
+		return fmt.Errorf("%s and %s are identical objects", otherName, originalName)
+	}
+
+	store.BlobSlice = append(store.BlobSlice, object)
+	store.Rewrites[originalName] = object.StorePath
+	if len(labels) > 0 {
+		store.Labels[object.StorePath] = labels
+	}
+	return nil
+}
+
+type txtarPath string
+
+// digest returns the digest part of the first element of the path, if present.
+func (path txtarPath) digest() (_ string, ok bool) {
+	const n = 32
+	name := path.objectName()
+	if len(name) < n+len("-x") || strings.IndexByte(name, '-') != n {
+		return "", false
+	}
+	return name[:n], true
+}
+
+// name returns the part of the first element of the path after the digest,
+// excluding the separating dash.
+// If there is no digest, returns the first element of the path.
+func (path txtarPath) name() string {
+	if digest, ok := path.digest(); ok {
+		return path.objectName()[len(digest)+len("-"):]
+	}
+	return path.objectName()
+}
+
+// objectName returns the first element of the path.
+func (path txtarPath) objectName() string {
+	objectName, _, _ := strings.Cut(string(path), "/")
+	return objectName
+}
+
+// subpath strips the first element of the path.
+func (path txtarPath) subpath() string {
+	_, subpath, _ := strings.Cut(string(path), "/")
+	subpath = strings.TrimLeft(subpath, "/")
+	return subpath
+}
+
+// isDirectory reports whether the path ends in a slash.
+func (path txtarPath) isDirectory() bool {
+	return strings.HasSuffix(string(path), "/")
+}
+
+// isSingleFile reports whether the path represents a store object that is a single file.
+func (path txtarPath) isSingleFile() bool {
+	return !strings.Contains(string(path), "/")
+}
+
+func copyTxtarToNAR(nw *nar.Writer, path txtarPath, data []byte, refs *sets.Sorted[zbstore.Path], rewrites iter.Seq2[string, zbstore.Path]) error {
+	h := &nar.Header{Path: path.subpath()}
+	if path.isDirectory() {
 		h.Mode = fs.ModeDir
 	} else {
 		h.Size = int64(len(data))
 	}
 	if err := nw.WriteHeader(h); err != nil {
-		return fmt.Errorf("serialize %s to nar: %v", file.Name, err)
+		return fmt.Errorf("serialize %s to nar: %v", path, err)
 	}
-	if !isDir {
+	if !path.isDirectory() {
 		for oldName, newPath := range rewrites {
-			fakePath, err := zbstore.DefaultUnixDirectory.Object(oldName)
-			if err != nil {
-				return fmt.Errorf("serialize %s to nar: %v", file.Name, err)
-			}
-			oldDigest := []byte(fakePath.Digest())
-			if bytes.Contains(data, oldDigest) {
-				refs.Add(newPath)
-				data = bytes.ReplaceAll(data, oldDigest, []byte(newPath.Digest()))
+			if oldDigest, ok := txtarPath(oldName).digest(); ok {
+				if bytes.Contains(data, []byte(oldDigest)) {
+					refs.Add(newPath)
+					data = bytes.ReplaceAll(data, []byte(oldDigest), []byte(newPath.Digest()))
+				}
 			}
 		}
 		if _, err := nw.Write(data); err != nil {
-			return fmt.Errorf("serialize %s to nar: %v", file.Name, err)
+			return fmt.Errorf("serialize %s to nar: %v", path, err)
 		}
 	}
 	return nil
 }
 
-func rewriteTxtarDerivation(dir zbstore.Directory, file txtar.File, rewrites iter.Seq2[string, zbstore.Path]) (*zbstore.Derivation, error) {
-	fakePath, err := dir.Object(file.Name)
+func cleanFileData(data []byte) []byte {
+	// Convert CRLF to LF.
+	data = bytes.ReplaceAll(data, []byte("\r"), nil)
+	return data
+}
+
+func rewriteTxtarDerivation(dir zbstore.Directory, drvName string, data []byte, rewrites iter.Seq2[string, zbstore.Path]) (*zbstore.Derivation, error) {
+	data, err := MinimizeDerivation(data)
 	if err != nil {
 		return nil, err
 	}
-	drvName, isDrv := fakePath.DerivationName()
-	if !isDrv {
-		return nil, fmt.Errorf("%s: not a %s file", file.Name, zbstore.DerivationExt)
-	}
-	data, err := MinimizeDerivation(file.Data)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %v", file.Name, err)
-	}
 	drv := &zbstore.Derivation{Name: drvName}
 	if err := drv.UnmarshalText(data); err != nil {
-		return nil, fmt.Errorf("%s: %v", file.Name, err)
+		return nil, err
 	}
 
 	if drv.Dir != "" {
@@ -168,7 +358,7 @@ func rewriteTxtarDerivation(dir zbstore.Directory, file txtar.File, rewrites ite
 		for oldBase, newPath := range rewrites {
 			oldPath, err := drv.Dir.Object(oldBase)
 			if err != nil {
-				return nil, fmt.Errorf("%s: cannot replace %q: %v", file.Name, oldBase, err)
+				continue
 			}
 			replacements = append(replacements, string(oldPath), string(newPath))
 			if drv.InputSources.Has(oldPath) {
