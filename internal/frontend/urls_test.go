@@ -72,12 +72,12 @@ func TestURLs(t *testing.T) {
 				}
 			}
 
-			objects, storePaths, err := storetest.TxtarObjects(storeDir, archive.Files)
+			txtarStore, err := storetest.TxtarObjects(storeDir, archive.Files)
 			if err != nil {
 				t.Fatal(err)
 			}
-			replacements := make([]string, 0, len(storePaths)*2)
-			for originalName, path := range storePaths {
+			replacements := make([]string, 0, len(txtarStore.Rewrites)*2)
+			for originalName, path := range txtarStore.Rewrites {
 				replacements = append(replacements, originalName, string(path))
 			}
 			replacer := strings.NewReplacer(replacements...)
@@ -95,14 +95,14 @@ func TestURLs(t *testing.T) {
 					t.Fatal(err)
 				}
 				objectBase, subpath, _ := strings.Cut(u.Path, "/")
-				objectIndex := slices.IndexFunc(objects, func(obj *zbstore.Blob) bool {
-					return obj.StorePath == storePaths[objectBase]
+				objectIndex := slices.IndexFunc(txtarStore.BlobSlice, func(obj *zbstore.Blob) bool {
+					return obj.StorePath == txtarStore.Rewrites[objectBase]
 				})
 				if objectIndex == -1 {
 					t.Fatalf("unknown object %s in zb eval arguments", objectBase)
 				}
 
-				urlstr := string(objects[objectIndex].StorePath)
+				urlstr := string(txtarStore.BlobSlice[objectIndex].StorePath)
 				if subpath != "" {
 					urlstr += "/" + subpath
 				}
@@ -110,7 +110,7 @@ func TestURLs(t *testing.T) {
 					urlstr += "#" + u.Fragment
 				}
 				urls[i] = urlstr
-				if err := server.WriteObject(ctx, objects[objectIndex]); err != nil {
+				if err := server.WriteObject(ctx, txtarStore.BlobSlice[objectIndex]); err != nil {
 					t.Fatal(err)
 				}
 			}

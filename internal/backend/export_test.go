@@ -85,11 +85,11 @@ func TestExport(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		objects, _, err := storetest.TxtarObjects(dir, ar.Files)
+		txtarStore, err := storetest.TxtarObjects(dir, ar.Files)
 		if err != nil {
 			return nil, err
 		}
-		return objects, nil
+		return txtarStore.BlobSlice, nil
 	}
 
 	for _, test := range tests {

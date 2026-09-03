@@ -199,25 +199,25 @@ func readTestData(dir zbstore.Directory, name string, fileSubstitutions map[stri
 		}
 	}
 
-	allObjects, rewrites, err := storetest.TxtarObjects(dir, archive.Files)
+	txtarStore, err := storetest.TxtarObjects(dir, archive.Files)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v", filename, err)
 	}
-	backendObjects := make(sets.Set[zbstore.Path], len(allObjects))
+	backendObjects := make(sets.Set[zbstore.Path], len(txtarStore.BlobSlice))
 	for name := range backendObjectNames {
-		backendObjects.Add(rewrites[name])
+		backendObjects.Add(txtarStore.Rewrites[name])
 	}
-	fallbackObjects := make(sets.Set[zbstore.Path], len(allObjects))
+	fallbackObjects := make(sets.Set[zbstore.Path], len(txtarStore.BlobSlice))
 	for name := range fallbackObjectNames {
-		fallbackObjects.Add(rewrites[name])
+		fallbackObjects.Add(txtarStore.Rewrites[name])
 	}
 	return &testDataArchive{
 		filename:        filename,
 		comment:         archive.Comment,
-		objects:         allObjects,
+		objects:         txtarStore.BlobSlice,
 		backendObjects:  backendObjects,
 		fallbackObjects: fallbackObjects,
-		rewrites:        rewrites,
+		rewrites:        txtarStore.Rewrites,
 	}, nil
 }
 

@@ -20,32 +20,41 @@ import (
 	"zombiezen.com/go/nix/nar"
 )
 
-// TxtarObjects converts the source files and .drv files in a txtar archive to a slice of [*zbstore.Blob],
+// TxtarStore is a collection of objects parsed by [TxtarObjects].
+type TxtarStore struct {
+	BlobSlice
+	// Rewrites is a map of store object names as they appear in the txtar file
+	// to their resulting store path.
+	Rewrites map[string]zbstore.Path
+}
+
+// TxtarObjects converts the source files and .drv files in a txtar archive to a [BlobSlice],
 // rewriting their paths to the named directory.
-// TxtarObjects also returns a map of file names to store paths.
-func TxtarObjects(dir zbstore.Directory, files []txtar.File) (BlobSlice, map[string]zbstore.Path, error) {
-	objects := make([]*zbstore.Blob, 0, len(files))
-	rewrites := make(map[string]zbstore.Path)
+func TxtarObjects(dir zbstore.Directory, files []txtar.File) (*TxtarStore, error) {
+	result := &TxtarStore{
+		BlobSlice: make(BlobSlice, 0, len(files)),
+		Rewrites:  make(map[string]zbstore.Path),
+	}
 
 	for objectFiles := range groupFilesByObject(files) {
 		objectName, _, hasSubpath := strings.Cut(objectFiles[0].Name, "/")
 		fakePath, err := dir.Object(objectName)
 		if err != nil {
-			return objects, rewrites, err
+			return result, err
 		}
 
 		// Special case: derivations.
 		if !hasSubpath && strings.HasSuffix(objectName, zbstore.DerivationExt) {
-			drv, err := rewriteTxtarDerivation(dir, objectFiles[0], maps.All(rewrites))
+			drv, err := rewriteTxtarDerivation(dir, objectFiles[0], maps.All(result.Rewrites))
 			if err != nil {
-				return objects, rewrites, fmt.Errorf("rewrite %s: %v", objectName, err)
+				return result, fmt.Errorf("rewrite %s: %v", objectName, err)
 			}
 			obj, err := drv.Export(nix.SHA256)
 			if err != nil {
-				return objects, rewrites, fmt.Errorf("rewrite %s: %v", objectName, err)
+				return result, fmt.Errorf("rewrite %s: %v", objectName, err)
 			}
-			objects = append(objects, obj)
-			rewrites[objectName] = obj.StorePath
+			result.BlobSlice = append(result.BlobSlice, obj)
+			result.Rewrites[objectName] = obj.StorePath
 			continue
 		}
 
@@ -53,12 +62,12 @@ func TxtarObjects(dir zbstore.Directory, files []txtar.File) (BlobSlice, map[str
 		nw := nar.NewWriter(buf)
 		refs := new(sets.Sorted[zbstore.Path])
 		for _, file := range objectFiles {
-			if err := copyTxtarToNAR(nw, refs, file, maps.All(rewrites)); err != nil {
-				return objects, rewrites, err
+			if err := copyTxtarToNAR(nw, refs, file, maps.All(result.Rewrites)); err != nil {
+				return result, err
 			}
 		}
 		if err := nw.Close(); err != nil {
-			return objects, rewrites, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
+			return result, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
 		}
 
 		obj := &zbstore.Blob{NAR: buf.Bytes()}
@@ -67,7 +76,7 @@ func TxtarObjects(dir zbstore.Directory, files []txtar.File) (BlobSlice, map[str
 			&zbstore.ContentAddressOptions{Digest: fakePath.Digest()},
 		)
 		if err != nil {
-			return objects, rewrites, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
+			return result, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
 		}
 		obj.ContentAddress = ca
 		storeRefs := zbstore.References{
@@ -76,7 +85,7 @@ func TxtarObjects(dir zbstore.Directory, files []txtar.File) (BlobSlice, map[str
 		}
 		obj.StorePath, err = zbstore.FixedCAOutputPath(dir, fakePath.Name(), obj.ContentAddress, storeRefs)
 		if err != nil {
-			return objects, rewrites, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
+			return result, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
 		}
 		obj.References = *storeRefs.ToSet(obj.StorePath)
 		newDigest := obj.StorePath.Digest()
@@ -84,14 +93,14 @@ func TxtarObjects(dir zbstore.Directory, files []txtar.File) (BlobSlice, map[str
 			readStart, readEnd := rewrite.ReadRange()
 			replacement, err := rewrite.Rewrite(newDigest, bytes.NewReader(obj.NAR[readStart:readEnd]))
 			if err != nil {
-				return objects, rewrites, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
+				return result, fmt.Errorf("%s: %v", objectFiles[0].Name, err)
 			}
 			copy(obj.NAR[rewrite.WriteOffset():], replacement)
 		}
-		objects = append(objects, obj)
-		rewrites[objectName] = obj.StorePath
+		result.BlobSlice = append(result.BlobSlice, obj)
+		result.Rewrites[objectName] = obj.StorePath
 	}
-	return objects, rewrites, nil
+	return result, nil
 }
 
 func groupFilesByObject(files []txtar.File) iter.Seq[[]txtar.File] {
