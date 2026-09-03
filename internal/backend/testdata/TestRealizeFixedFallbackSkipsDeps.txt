@@ -1,0 +1,71 @@
+# Build derivation.
+[x86_64] [linux] realize qj0fc55wrd3w4ynny0nzchdl19xjvvmm-fixed.txt.drv
+# TODO(now): [aarch64] [linux] realize
+# TODO(now): [aarch64] [macos] realize
+[x86_64] [windows] realize bvhbwiyy6khwg5zxj29fk98rcr6z1595-fixed.txt.drv
+
+# Verify that we got the fallback object.
+grep '^Hello, World!$' $out
+
+-- gapg351bbdnjvh2k6dvn6ck6awcf549i-dep.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "exit 1"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- 3wnsvp7r1schcq1i3rcbzzxp333znr57-dep.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [],
+  "x86_64-pc-windows",
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  [
+    "-Command",
+    "exit 1"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- [fallback] 2jpzm50pphiqic1375zvi342x6xx8ran-fixed.txt [sha256:c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31] --
+Hello, World!
+-- qj0fc55wrd3w4ynny0nzchdl19xjvvmm-fixed.txt.drv --
+Derive(
+  [("out", "/opt/zb/store/2jpzm50pphiqic1375zvi342x6xx8ran-fixed.txt", "sha256", "c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31")],
+  [("/opt/zb/store/gapg351bbdnjvh2k6dvn6ck6awcf549i-dep.drv", ["out"])],
+  [],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "exit 1"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- bvhbwiyy6khwg5zxj29fk98rcr6z1595-fixed.txt.drv --
+Derive(
+  [("out", "C:\\zb\\store\\wssgsrjkbxll73kxc4j2acn9n9bkdyiy-fixed.txt", "sha256", "c98c24b677eff44860afea6f493bbaec5bb1c4cbb209c6fc2bbb47f66ff2ad31")],
+  [("C:\\zb\\store\\3wnsvp7r1schcq1i3rcbzzxp333znr57-dep.drv", ["out"])],
+  [],
+  "x86_64-pc-windows",
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  [
+    "-Command",
+    "exit 1"
+  ],
+  [
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)

@@ -434,7 +434,7 @@ func (b *builder) expand(drvPath zbstore.Path, drv *zbstore.Derivation, temporar
 	return expandedDrv, nil
 }
 
-// gatherRealizations attempts to gather as many realizations in the graph
+// gatherRealizations attempts to gather as many realizations in the graph as possible
 // from the local and fallback stores
 // without running any builders.
 func (b *builder) gatherRealizations(ctx context.Context, graph *dependencyGraph) error {
@@ -457,10 +457,9 @@ func (b *builder) gatherRealizations(ctx context.Context, graph *dependencyGraph
 		if err != nil {
 			if errors.Is(err, errMultipleRealizations) || errors.Is(err, errRealizationNotFound) {
 				log.Debugf(ctx, "Unable to gather realization for %s (%v)", curr, err)
-				it.finish(curr, false)
-				continue
+			} else {
+				return err
 			}
-			return err
 		}
 		it.finish(curr, true)
 	}
