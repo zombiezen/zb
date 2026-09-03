@@ -481,6 +481,19 @@ func (b *builder) gatherRealizationsForDerivation(ctx context.Context, curr zbst
 	b.drvHashes[curr] = drvHash
 
 	drvHashKey := makeHashKey(drvHash)
+	if node.derivation.Outputs.IsFixed() {
+		outputPath, err := node.derivation.FixedOutputPath()
+		if err != nil {
+			return fmt.Errorf("realize %s: %v", curr, err)
+		}
+		eqClass := equivalenceClass{
+			drvHashKey: drvHashKey,
+			outputName: unique.Make(zbstore.DefaultOutputName),
+		}
+		b.realizations[eqClass] = cachedRealization{path: outputPath}
+		return nil
+	}
+
 	wantEqClasses := iter.Seq[derivationPathAndEquivalenceClass](func(yield func(derivationPathAndEquivalenceClass) bool) {
 		for outputName := range node.usedOutputs.All() {
 			dpe := derivationPathAndEquivalenceClass{
@@ -1114,20 +1127,35 @@ func (b *builder) planRealizationsAndFinalizeBuildResult(ctx context.Context, co
 	defer sqlitex.Save(conn)(&err)
 
 	p := b.newPlanner()
-	p.planSeq(ctx, conn, func(yield func(derivationPathAndEquivalenceClass) bool) {
-		for outputName := range state.outputNames.All() {
-			dpe := derivationPathAndEquivalenceClass{
-				drvPath: state.drvPath,
-				equivalenceClass: equivalenceClass{
-					drvHashKey: state.derivationHashKey,
-					outputName: outputName,
-				},
-			}
-			if !yield(dpe) {
-				return
-			}
+	if state.derivation.Outputs.IsFixed() {
+		outputPath, err := state.derivation.FixedOutputPath()
+		if err != nil {
+			return nil, err
 		}
-	})
+		dpe := derivationPathAndEquivalenceClass{
+			drvPath: state.drvPath,
+			equivalenceClass: equivalenceClass{
+				drvHashKey: state.derivationHashKey,
+				outputName: unique.Make(zbstore.DefaultOutputName),
+			},
+		}
+		p.insertFixed(conn, dpe, outputPath)
+	} else {
+		p.planSeq(ctx, conn, func(yield func(derivationPathAndEquivalenceClass) bool) {
+			for outputName := range state.outputNames.All() {
+				dpe := derivationPathAndEquivalenceClass{
+					drvPath: state.drvPath,
+					equivalenceClass: equivalenceClass{
+						drvHashKey: state.derivationHashKey,
+						outputName: outputName,
+					},
+				}
+				if !yield(dpe) {
+					return
+				}
+			}
+		})
+	}
 
 	switch {
 	case p.isAvailableLocally():

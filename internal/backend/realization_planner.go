@@ -80,6 +80,33 @@ func (p *realizationPlanner) commit() {
 	p.absent.Clear()
 }
 
+func (p *realizationPlanner) insertFixed(conn *sqlite.Conn, dpe derivationPathAndEquivalenceClass, outputPath zbstore.Path) {
+	if p.error != nil {
+		return
+	}
+	if _, exists := p.get(dpe.equivalenceClass); exists {
+		return
+	}
+	present, err := objectExists(conn, outputPath)
+	if err != nil {
+		p.error = err
+		return
+	}
+	if !present {
+		if p.absent == nil {
+			p.error = fmt.Errorf("insert fixed realization for %v: %w", dpe.toOutputReference(), errRealizationNotFound)
+			return
+		}
+		p.absent.Add(dpe.equivalenceClass)
+	}
+	p.planned[dpe.equivalenceClass] = cachedRealization{
+		path: outputPath,
+		closure: map[zbstore.Path]sets.Set[equivalenceClass]{
+			outputPath: sets.New(equivalenceClass{}),
+		},
+	}
+}
+
 // plan finds a realization to use for a derivation output
 // from the store database
 // that is compatible with existing realizations in the builder.
