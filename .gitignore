@@ -6,6 +6,7 @@ _artifacts/
 node_modules/
 /internal/ui/build/
 .env
+.direnv
 *.js.map
 *.css.map
 zb-v*.tar.gz
