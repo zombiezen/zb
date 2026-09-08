@@ -116,14 +116,6 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig, stdio *standard
 	if err != nil {
 		return err
 	}
-	var uploadHTTPStore *zbstorehttp.Store
-	switch uploadStore := uploadStore.(type) {
-	case zbstore.Null:
-	case *zbstorehttp.Store:
-		uploadHTTPStore = uploadStore
-	default:
-		return fmt.Errorf("unsupported type %q for upload store", g.Server.Upload.storeType)
-	}
 
 	webHandler := new(webServer)
 	if c.TemplatesDirectory != "" {
@@ -169,7 +161,7 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig, stdio *standard
 		BuildLogRetention:           c.BuildLogRetention,
 		Keyring:                     keyring,
 		Fallback:                    fallbackStore,
-		Writer:                      uploadHTTPStore,
+		Writer:                      uploadStore,
 	})
 	defer func() {
 		if err := backendServer.Close(); err != nil {
