@@ -53,7 +53,7 @@ type serveCommand struct {
 	AllowKeepFailed   bool              `kong:"negatable,default=true,help=Allow user to skip cleanup of failed builds."`
 	CoresPerBuild     int               `kong:"default=${num_cpu},help=Hint to builders for number of concurrent jobs to run"`
 	BuildLogRetention time.Duration     `kong:"default=168h,help=Delete finished build logs after this duration. (Default: ${default})"`
-	SystemdSocket     bool              `kong:"help=Use systemd socket activation"`
+	SystemdSocket     bool              `kong:"name=systemd,help=Use systemd socket activation."`
 
 	WebListenAddress   string `kong:"name=ui,placeholder=[host]:port,help=Serve HTTP for web UI at the given address."`
 	AllowRemoteWeb     bool   `kong:"name=allow-remote-ui,help=Accept non-localhost connections for web UI."`
