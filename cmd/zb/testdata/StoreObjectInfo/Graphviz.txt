@@ -1,0 +1,13 @@
+zb eval --expression 'toFile("ref.txt", path("hello.txt"))'
+stdout ^$ZB_STORE_DIR${/}
+
+read storePath
+zb store object info --dot --output=graph.dot $storePath
+grep 'ref\.txt.*->.*hello\.txt' graph.dot
+
+# Check Graphviz syntax.
+? cat graph.dot
+[exec:nop] exec nop -p graph.dot
+
+-- hello.txt --
+Hello, World!

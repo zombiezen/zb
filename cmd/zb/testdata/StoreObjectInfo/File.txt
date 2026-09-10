@@ -1,0 +1,12 @@
+zb eval --expression 'path("hello.txt")'
+stdout ^$ZB_STORE_DIR${/}
+
+read storePath
+zb store object info $storePath
+stdout ^StorePath:\s+$storePath$
+stdout '^NarHash:\s+sha256:0xmvxmsmmc6n79sk2h3r6db3yp8drmxps61mdk7iqnvc6vcsww60$'
+stdout '^NarSize:\s+128$'
+stdout '^CA:\s+fixed:r:sha256:[0-9a-z]+$'
+
+-- hello.txt --
+Hello, World!

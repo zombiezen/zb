@@ -60,6 +60,9 @@ from roughly 10 minutes to XX seconds with a reasonably fast internet connection
   serves to access the metatable field.
   Thank you to [@ocurr](https://github.com/ocurr) for the design feedback!
   ([#117](https://github.com/256lights/zb/issues/117))
+- `zb derivation show` and `zb store object info` now accept a `--dot` flag
+  to format output in the [Graphviz DOT language](https://graphviz.org/doc/info/lang.html).
+  ([#227](https://github.com/256lights/zb/issues/227))
 
 [zstd]: https://en.wikipedia.org/wiki/Zstd
 

@@ -1,0 +1,9 @@
+zb eval --expression 'path("hello.txt")'
+stdout ^$ZB_STORE_DIR${/}
+
+read storePath
+zb store object info --json $storePath
+stdout '^\{(?:.+,)?\s*"path":".*\}$'
+
+-- hello.txt --
+Hello, World!

@@ -1,0 +1,31 @@
+zb derivation show hello.lua
+stdout '\ADerive\(.*\)\z'
+stdout 'Hello, World!'
+[linux] stdout /bin/sh
+[macos] stdout /bin/sh
+[windows] stdout powershell.exe
+-- hello.lua --
+return setmetatable({}, {
+  __outputs = function(self, system)
+    local builder, args
+    if system:match("-windows$") then
+      builder = [[C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe]]
+      args = {
+        "-Command",
+        [["Hello, World!`n" | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}]],
+      }
+    else
+      builder = "/bin/sh"
+      args = {
+        "-c",
+        [[echo 'Hello, World!' > $out]],
+      }
+    end
+    return (derivation {
+      name = "hello.txt";
+      builder = builder;
+      args = args;
+      system = system;
+    }).out
+  end;
+})

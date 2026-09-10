@@ -6,18 +6,23 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	_ "embed"
 	"errors"
 	"fmt"
+	"html"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/go-json-experiment/json/jsontext"
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/backend"
+	"zb.256lights.llc/pkg/internal/dot"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/xio"
 	"zb.256lights.llc/pkg/internal/zbstorehttp"
@@ -54,8 +59,10 @@ func (storeObjectCommand) Signature() string {
 
 type storeObjectInfoCommand struct {
 	Paths      []zbstore.Path `kong:"name=path,arg,optional"`
+	OutputPath string         `kong:"name=output,short=o,default=-,help=Write to file instead of stdout.,placeholder=FILE"`
 	Recursive  bool           `kong:"short=r,help=Show information for referenced objects."`
-	JSONFormat bool           `kong:"name=json,help=Print object info as JSON"`
+	JSONFormat bool           `kong:"name=json,help=Print object info as JSON.,xor=format"`
+	DOTFormat  bool           `kong:"name=dot,help=Print object info as Graphviz DOT.,xor=format"`
 }
 
 func (c *storeObjectInfoCommand) Signature() string {
@@ -66,13 +73,53 @@ func (c *storeObjectInfoCommand) Run(ctx context.Context, g *globalConfig, stdio
 	store := g.openLocalStore(ctx)
 	defer store.Close()
 
+	outputFile, err := stdio.openOutputFile(c.OutputPath)
+	if err != nil {
+		return err
+	}
+	defer outputFile.Close()
+
+	paths := make(sets.Set[zbstore.Path])
+	selected := make(sets.Set[string])
+	for _, path := range c.Paths {
+		paths.Add(path)
+		selected.Add(string(path))
+	}
+
+	opts := &zbstore.ExportOptions{
+		ExcludeReferences: !c.Recursive,
+	}
+	if c.DOTFormat {
+		gb := newGraphBuilder(selected)
+		err := zbstore.Copy(ctx, gb, store, paths, opts)
+		if err != nil {
+			return err
+		}
+		gb.finalize()
+		data, err := gb.graph.MarshalText()
+		if err != nil {
+			return err
+		}
+		if _, err := outputFile.Write(data); err != nil {
+			return err
+		}
+		if err := outputFile.Close(); err != nil {
+			return err
+		}
+		return nil
+	}
+
 	p := &objectInfoPrinter{
-		w:    os.Stdout,
+		w:    outputFile,
 		json: c.JSONFormat,
 	}
-	return zbstore.Copy(ctx, p, store, sets.Collect(slices.Values(c.Paths)), &zbstore.ExportOptions{
-		ExcludeReferences: !c.Recursive,
-	})
+	if err := zbstore.Copy(ctx, p, store, paths, opts); err != nil {
+		return err
+	}
+	if err := outputFile.Close(); err != nil {
+		return err
+	}
+	return nil
 }
 
 type objectInfoPrinter struct {
@@ -169,6 +216,225 @@ keyValues:
 	}
 
 	return out.Bytes(), nil
+}
+
+type graphBuilder struct {
+	graph    dot.Graph
+	selected sets.Set[string]
+	visited  sets.Set[dot.ID]
+}
+
+func newGraphBuilder(selected sets.Set[string]) *graphBuilder {
+	return &graphBuilder{
+		graph: dot.Graph{
+			Strict:   true,
+			Directed: true,
+			Subgraph: dot.Subgraph{
+				Attributes: map[dot.ID]dot.Attribute{
+					"bgcolor": {Value: "#cccccc"},
+					"rankdir": {Value: "BT"},
+					"ranksep": {Value: "2.0"},
+				},
+			},
+		},
+		selected: selected,
+		visited:  make(sets.Set[dot.ID]),
+	}
+}
+
+func (gb *graphBuilder) WriteObject(ctx context.Context, object zbstore.Object) error {
+	info := object.Info()
+	if gb.visited.Has(dot.ID(info.StorePath)) {
+		return nil
+	}
+
+	if _, isDrv := info.StorePath.DerivationName(); isDrv {
+		if drv, err := zbstore.ParseDerivationObject(ctx, object); err == nil {
+			gb.addDerivation(info.StorePath.Name(), info.StorePath, &info.References, drv)
+			return nil
+		}
+	}
+	gb.addSource(info)
+	return nil
+}
+
+func (gb *graphBuilder) newNode(name string, path zbstore.Path, outputNames *sets.Sorted[string]) *dot.NodeStatement {
+	nodeAttributes := map[dot.ID]dot.Attribute{
+		"color": {Value: "#000000"},
+	}
+	if path != "" {
+		nodeAttributes["tooltip"] = dot.Attribute{Value: string(path)}
+	}
+
+	if outputNames.Len() == 0 {
+		nodeAttributes["label"] = dot.Attribute{Value: name}
+	} else {
+		label := new(strings.Builder)
+		fmt.Fprintf(label, `<table><tr><td colspan="%d" sides="B">%s</td></tr><tr>`,
+			max(outputNames.Len(), 1), html.EscapeString(name))
+		for i, outputName := range outputNames.All() {
+			if i > 0 {
+				label.WriteString(`<td sides="L" port="`)
+			} else {
+				label.WriteString(`<td border="0" port="`)
+			}
+			label.WriteString(html.EscapeString(outputName))
+			label.WriteString(`">`)
+			label.WriteString(html.EscapeString(outputName))
+			label.WriteString("</td>")
+		}
+		label.WriteString("</tr></table>")
+		nodeAttributes["label"] = dot.Attribute{
+			Value: label.String(),
+			HTML:  true,
+		}
+	}
+
+	isDrv := outputNames.Len() > 0
+	if !isDrv && path != "" {
+		_, isDrv = path.DerivationName()
+	}
+	if isDrv {
+		nodeAttributes["shape"] = dot.Attribute{Value: "none"}
+		nodeAttributes["margin"] = dot.Attribute{Value: "0"}
+		nodeAttributes["style"] = dot.Attribute{Value: "filled"}
+	} else {
+		nodeAttributes["shape"] = dot.Attribute{Value: "box"}
+		nodeAttributes["style"] = dot.Attribute{Value: "rounded,filled"}
+	}
+	id := cmp.Or(dot.ID(path), dot.ID(name))
+	if path != "" && gb.selected.Has(string(id)) {
+		nodeAttributes["fillcolor"] = dot.Attribute{Value: "#eedd00"}
+	} else {
+		nodeAttributes["fillcolor"] = dot.Attribute{Value: "#ffffff"}
+	}
+	node := &dot.NodeStatement{
+		ID:         dot.MakeNodeID(id, dot.DefaultCompassPoint),
+		Attributes: nodeAttributes,
+	}
+	gb.graph.Statements = append(gb.graph.Statements, node)
+	gb.visited.Add(id)
+	return node
+}
+
+func (gb *graphBuilder) addSource(info *zbstore.ObjectInfo) {
+	node := gb.newNode(info.StorePath.Name(), info.StorePath, nil)
+
+	if info.References.Len() > 0 {
+		dataEdgesStatement := &dot.EdgeStatement{
+			Operands: [][]*dot.NodeStatement{
+				{{ID: dot.MakeNodeID(node.ID.ID(), dot.North)}},
+				make([]*dot.NodeStatement, 0, info.References.Len()),
+			},
+			Attributes: map[dot.ID]dot.Attribute{
+				"arrowhead": {Value: "open"},
+				"style":     {Value: "dashed"},
+			},
+		}
+		for ref := range info.References.Values() {
+			dataEdgesStatement.Operands[1] = append(dataEdgesStatement.Operands[1], &dot.NodeStatement{
+				ID: dot.MakeNodeID(dot.ID(ref), dot.South),
+			})
+		}
+		gb.graph.Statements = append(gb.graph.Statements, dataEdgesStatement)
+	}
+}
+
+func (gb *graphBuilder) addDerivation(name string, path zbstore.Path, refs *sets.Sorted[zbstore.Path], drv *zbstore.Derivation) {
+	if gb.visited.Has(cmp.Or(dot.ID(path), dot.ID(name))) {
+		return
+	}
+	node := gb.newNode(name, path, sets.CollectSorted(maps.Keys(drv.Outputs)))
+
+	for ref := range drv.InputDerivationOutputs() {
+		gb.graph.Statements = append(gb.graph.Statements, &dot.EdgeStatement{
+			Operands: [][]*dot.NodeStatement{
+				{{ID: dot.MakeNodeID(node.ID.ID(), dot.North)}},
+				{{ID: dot.MakeNodeIDWithPort(dot.ID(ref.DrvPath), dot.ID(ref.OutputName), dot.South)}},
+			},
+			Attributes: map[dot.ID]dot.Attribute{
+				"arrowhead": {Value: "normal"},
+				"style":     {Value: "solid"},
+			},
+		})
+	}
+
+	if drv.InputSources.Len() > 0 {
+		sourcesStatement := &dot.EdgeStatement{
+			Operands: [][]*dot.NodeStatement{
+				{{ID: dot.MakeNodeID(node.ID.ID(), dot.North)}},
+				make([]*dot.NodeStatement, 0, refs.Len()),
+			},
+			Attributes: map[dot.ID]dot.Attribute{
+				"arrowhead": {Value: "open"},
+				"style":     {Value: "dashed"},
+			},
+		}
+		for source := range drv.InputSources.Values() {
+			sourcesStatement.Operands[1] = append(sourcesStatement.Operands[1], &dot.NodeStatement{
+				ID: dot.MakeNodeID(dot.ID(source), dot.South),
+			})
+		}
+		gb.graph.Statements = append(gb.graph.Statements, sourcesStatement)
+	}
+
+	unaccountedRefsStatement := &dot.EdgeStatement{
+		Operands: [][]*dot.NodeStatement{
+			{{ID: dot.MakeNodeID(node.ID.ID(), dot.North)}},
+			make([]*dot.NodeStatement, 0, refs.Len()),
+		},
+		Attributes: map[dot.ID]dot.Attribute{
+			"arrowhead": {Value: "open"},
+			"style":     {Value: "dotted"},
+			"label":     {Value: "?"},
+		},
+	}
+	for ref := range refs.Values() {
+		if drv.InputDerivations[ref].Len() == 0 && !drv.InputSources.Has(ref) {
+			unaccountedRefsStatement.Operands[1] = append(unaccountedRefsStatement.Operands[1], &dot.NodeStatement{
+				ID: dot.MakeNodeID(dot.ID(ref), dot.South),
+			})
+		}
+	}
+	if len(unaccountedRefsStatement.Operands[1]) > 0 {
+		gb.graph.Statements = append(gb.graph.Statements, unaccountedRefsStatement)
+	}
+}
+
+func (gb *graphBuilder) finalize() {
+	missing := make(map[zbstore.Path]*sets.Sorted[string])
+
+	var recurse func(g *dot.Subgraph)
+	recurse = func(g *dot.Subgraph) {
+		for _, stmt := range g.Statements {
+			switch stmt := stmt.(type) {
+			case *dot.EdgeStatement:
+				for _, op := range stmt.Operands {
+					for _, node := range op {
+						path, err := zbstore.ParsePath(string(node.ID.ID()))
+						if err != nil || gb.visited.Has(node.ID.ID()) {
+							continue
+						}
+						outputNames := missing[path]
+						if outputNames == nil {
+							outputNames = new(sets.Sorted[string])
+							missing[path] = outputNames
+						}
+						if port, hasPort := node.ID.Port(); hasPort {
+							outputNames.Add(string(port))
+						}
+					}
+				}
+			case *dot.Subgraph:
+				recurse(stmt)
+			}
+		}
+	}
+
+	recurse(&gb.graph.Subgraph)
+	for path, outputNames := range missing {
+		gb.newNode(path.Name(), path, outputNames)
+	}
 }
 
 type storeObjectExportCommand struct {
