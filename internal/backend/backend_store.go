@@ -61,7 +61,7 @@ func (s *Server) readDerivationClosure(ctx context.Context, drvPaths []zbstore.P
 	// Walk through closure to ensure that every named output exists.
 	for drvPath, drv := range result {
 		for ref := range drv.InputDerivationOutputs() {
-			if _, ok := result[ref.DrvPath].Outputs[ref.OutputName]; !ok {
+			if !result[ref.DrvPath].Outputs.Has(ref.OutputName) {
 				return result, fmt.Errorf("derivation %s depends on non-existent output %v", drvPath, ref)
 			}
 		}
@@ -100,35 +100,7 @@ func (s *Server) readDerivation(ctx context.Context, drvPath zbstore.Path) (*zbs
 	if err != nil {
 		return nil, fmt.Errorf("read derivation %s: %v", drvPath, err)
 	}
-	if err := validateOutputs(drv); err != nil {
-		return nil, fmt.Errorf("read derivation %s: %v", drvPath, err)
-	}
 	return drv, nil
-}
-
-func validateOutputs(drv *zbstore.Derivation) error {
-	if len(drv.Outputs) == 0 {
-		return fmt.Errorf("derivation must have at least one output")
-	}
-	for outputName, outputType := range drv.Outputs {
-		switch {
-		case outputType.IsFixed():
-			if outputName != zbstore.DefaultDerivationOutputName {
-				return fmt.Errorf("output %s is fixed, but only %s is permitted to be fixed", outputName, zbstore.DefaultDerivationOutputName)
-			}
-			if len(drv.Outputs) != 1 {
-				return fmt.Errorf("fixed-output derivations can only have a single output")
-			}
-		case outputType.IsFloating():
-			if t, ok := outputType.HashType(); !ok || t != nix.SHA256 || !outputType.IsRecursiveFile() {
-				return fmt.Errorf("floating output %s must use %v and be recursive (uses %v and recursive=%t)",
-					outputName, nix.SHA256, t, outputType.IsRecursiveFile())
-			}
-		default:
-			return fmt.Errorf("output %s is neither fixed nor floating", outputName)
-		}
-	}
-	return nil
 }
 
 func findPossibleRealizations(ctx context.Context, conn *sqlite.Conn, eqClass equivalenceClass, reuse *zbstorerpc.ReusePolicy) (presentInStore, absentFromStore sets.Set[zbstore.Path], err error) {

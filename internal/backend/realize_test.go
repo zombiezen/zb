@@ -225,7 +225,7 @@ func TestRealizeInputReference(t *testing.T) {
 			want := zbstore.RealizationMap{
 				DerivationHash: drvHash,
 				Realizations: map[string][]*zbstore.Realization{
-					zbstore.DefaultDerivationOutputName: {{
+					zbstore.DefaultOutputName: {{
 						OutputPath: wantOutputPath,
 						ReferenceClasses: []*zbstore.ReferenceClass{
 							{Path: inputPath},
@@ -452,14 +452,14 @@ func TestRealizeSignature(t *testing.T) {
 	if gotResult == nil {
 		return
 	}
-	output, err := gotResult.OutputForName(zbstore.DefaultDerivationOutputName)
+	output, err := gotResult.OutputForName(zbstore.DefaultOutputName)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !output.Path.Valid {
 		t.Errorf("no output path for %v", zbstore.OutputReference{
 			DrvPath:    drvPath,
-			OutputName: zbstore.DefaultDerivationOutputName,
+			OutputName: zbstore.DefaultOutputName,
 		})
 	}
 
@@ -480,7 +480,7 @@ func TestRealizeSignature(t *testing.T) {
 		Status:  zbstorerpc.BuildSuccess,
 		Outputs: []*zbstorerpc.RealizeOutput{
 			{
-				Name:       zbstore.DefaultDerivationOutputName,
+				Name:       zbstore.DefaultOutputName,
 				Path:       output.Path,
 				Signatures: []*zbstore.RealizationSignature{sig},
 			},
@@ -753,7 +753,7 @@ func TestRealizeUpload(t *testing.T) {
 	} else {
 		outputRef := zbstore.RealizationOutputReference{
 			DerivationHash: drvHash,
-			OutputName:     zbstore.DefaultDerivationOutputName,
+			OutputName:     zbstore.DefaultOutputName,
 		}
 		wantRealization := &zbstore.Realization{
 			OutputPath: wantOutputPath,
@@ -766,7 +766,7 @@ func TestRealizeUpload(t *testing.T) {
 		want := zbstore.RealizationMap{
 			DerivationHash: drvHash,
 			Realizations: map[string][]*zbstore.Realization{
-				zbstore.DefaultDerivationOutputName: {
+				zbstore.DefaultOutputName: {
 					wantRealization,
 				},
 			},

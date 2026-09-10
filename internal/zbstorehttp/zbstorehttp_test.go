@@ -142,7 +142,7 @@ func TestStoreFetchRealizations(t *testing.T) {
 		want := zbstore.RealizationMap{
 			DerivationHash: drvHash,
 			Realizations: map[string][]*zbstore.Realization{
-				zbstore.DefaultDerivationOutputName: {
+				zbstore.DefaultOutputName: {
 					{
 						OutputPath: "/opt/zb/store/mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt",
 					},
@@ -259,7 +259,7 @@ func TestStoreWriteRealizations(t *testing.T) {
 		err = store.WriteRealizations(ctx, zbstore.RealizationMap{
 			DerivationHash: drvHash,
 			Realizations: map[string][]*zbstore.Realization{
-				zbstore.DefaultDerivationOutputName: {
+				zbstore.DefaultOutputName: {
 					{
 						OutputPath: "/opt/zb/store/mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt",
 					},
@@ -282,7 +282,7 @@ func TestStoreWriteRealizations(t *testing.T) {
 		want := zbstore.RealizationMap{
 			DerivationHash: drvHash,
 			Realizations: map[string][]*zbstore.Realization{
-				zbstore.DefaultDerivationOutputName: {
+				zbstore.DefaultOutputName: {
 					{
 						OutputPath: "/opt/zb/store/mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt",
 					},
@@ -316,7 +316,7 @@ func TestStoreWriteRealizations(t *testing.T) {
 		err = store.WriteRealizations(ctx, zbstore.RealizationMap{
 			DerivationHash: drvHash,
 			Realizations: map[string][]*zbstore.Realization{
-				zbstore.DefaultDerivationOutputName: {
+				zbstore.DefaultOutputName: {
 					{
 						OutputPath: "/opt/zb/store/mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt",
 						Signatures: []*zbstore.RealizationSignature{
@@ -348,7 +348,7 @@ func TestStoreWriteRealizations(t *testing.T) {
 		want := zbstore.RealizationMap{
 			DerivationHash: drvHash,
 			Realizations: map[string][]*zbstore.Realization{
-				zbstore.DefaultDerivationOutputName: {
+				zbstore.DefaultOutputName: {
 					{
 						OutputPath: "/opt/zb/store/mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt",
 						Signatures: []*zbstore.RealizationSignature{
@@ -429,7 +429,7 @@ func TestStoreWriteRealizations(t *testing.T) {
 					err = store.WriteRealizations(ctx, zbstore.RealizationMap{
 						DerivationHash: drvHash,
 						Realizations: map[string][]*zbstore.Realization{
-							zbstore.DefaultDerivationOutputName: {
+							zbstore.DefaultOutputName: {
 								{
 									OutputPath: "/opt/zb/store/mv4z5c5znjdnc40fvqfl1qknszgbdyxd-hello.txt",
 								},

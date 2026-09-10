@@ -366,14 +366,8 @@ func rewriteTxtarDerivation(dir zbstore.Directory, drvName string, data []byte, 
 				drv.InputSources.Add(newPath)
 			}
 			for outputName := range drv.InputDerivations[oldPath].Values() {
-				oldPlaceholder := zbstore.UnknownCAOutputPlaceholder(zbstore.OutputReference{
-					DrvPath:    oldPath,
-					OutputName: outputName,
-				})
-				newPlaceholder := zbstore.UnknownCAOutputPlaceholder(zbstore.OutputReference{
-					DrvPath:    newPath,
-					OutputName: outputName,
-				})
+				oldPlaceholder := zbstore.OutputReference{DrvPath: oldPath, OutputName: outputName}.Placeholder()
+				newPlaceholder := zbstore.OutputReference{DrvPath: newPath, OutputName: outputName}.Placeholder()
 				replacements = append(replacements, oldPlaceholder, newPlaceholder)
 			}
 			if outputNames, ok := drv.InputDerivations[oldPath]; ok {

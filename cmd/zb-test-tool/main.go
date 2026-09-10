@@ -107,7 +107,7 @@ func (c *derivationInputPlaceholderCommand) Signature() string {
 }
 
 func (c *derivationInputPlaceholderCommand) Run(kc *kong.Context) error {
-	_, err := fmt.Fprintln(kc.Stdout, zbstore.UnknownCAOutputPlaceholder(c.OutputReference))
+	_, err := fmt.Fprintln(kc.Stdout, c.OutputReference.Placeholder())
 	return err
 }
 
@@ -120,7 +120,7 @@ func (c *derivationOutputPlaceholderCommand) Signature() string {
 }
 
 func (c *derivationOutputPlaceholderCommand) Run(kc *kong.Context) error {
-	_, err := fmt.Fprintln(kc.Stdout, zbstore.HashPlaceholder(c.OutputName))
+	_, err := fmt.Fprintln(kc.Stdout, zbstore.OutputPlaceholder(c.OutputName))
 	return err
 }
 
@@ -441,8 +441,8 @@ func rewriteDerivationForSystem(drv *zbstore.Derivation, wantSystem system.Syste
 				OutputName: outputName,
 			}
 			replacements = append(replacements,
-				zbstore.UnknownCAOutputPlaceholder(oldRef),
-				zbstore.UnknownCAOutputPlaceholder(newRef),
+				oldRef.Placeholder(),
+				newRef.Placeholder(),
 			)
 		}
 	}
@@ -459,28 +459,23 @@ func marshalIndentDerivation(drv *zbstore.Derivation) []byte {
 	const indent = "  "
 	var buf []byte
 	buf = append(buf, "Derive(\n"+indent+"["...)
-	if len(drv.Outputs) <= 1 {
-		for outName, t := range drv.Outputs {
-			var err error
-			buf, err = zbstore.AppendDerivationOutput(buf, drv.Dir, drv.Name, outName, t)
-			if err != nil {
-				panic(err)
-			}
+	outputIndex := 0
+	for output := range drv.Outputs.All(drv.Dir, drv.Name) {
+		if drv.Outputs.Len() > 1 {
+			buf = append(buf, "\n"+indent+indent...)
 		}
-	} else {
+		var err error
+		buf, err = output.AppendText(buf)
+		if err != nil {
+			panic(err)
+		}
+		if outputIndex < drv.Outputs.Len()-1 {
+			buf = append(buf, ',')
+		}
+		outputIndex++
+	}
+	if drv.Outputs.Len() > 1 {
 		buf = append(buf, "\n"+indent...)
-		for i, outName := range xmaps.SortedKeys(drv.Outputs) {
-			buf = append(buf, indent...)
-			var err error
-			buf, err = zbstore.AppendDerivationOutput(buf, drv.Dir, drv.Name, outName, drv.Outputs[outName])
-			if err != nil {
-				panic(err)
-			}
-			if i < len(drv.Outputs)-1 {
-				buf = append(buf, ',')
-			}
-			buf = append(buf, "\n"+indent...)
-		}
 	}
 
 	buf = append(buf, "],\n"+indent+"["...)

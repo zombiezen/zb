@@ -94,7 +94,7 @@ func (s *Server) realize(ctx context.Context, req *jsonrpc.Request) (_ *jsonrpc.
 	err = s.startBuild(ctx, conn, buildID, func(ctx context.Context) {
 		wantOutputs := make(sets.Set[zbstore.OutputReference])
 		for _, drvPath := range drvPaths {
-			for outputName := range drvCache[drvPath].Outputs {
+			for outputName := range drvCache[drvPath].Outputs.Names() {
 				wantOutputs.Add(zbstore.OutputReference{
 					DrvPath:    drvPath,
 					OutputName: outputName,
@@ -707,7 +707,7 @@ func (b *builder) ignoreRealizations(graph *dependencyGraph, roots sets.Set[zbst
 		if !h.IsZero() {
 			delete(b.drvHashes, curr)
 			k := makeHashKey(h)
-			for outputName := range b.derivations[curr].Outputs {
+			for outputName := range b.derivations[curr].Outputs.Names() {
 				delete(b.realizations, equivalenceClass{
 					drvHashKey: k,
 					outputName: unique.Make(outputName),
@@ -751,7 +751,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 	}
 	state.derivationHashKey = makeHashKey(state.derivationHash)
 	for outputName := range outputNames.All() {
-		if state.derivation.Outputs[outputName.Value()] == nil {
+		if !state.derivation.Outputs.Has(outputName.Value()) {
 			ref := zbstore.OutputReference{
 				DrvPath:    drvPath,
 				OutputName: outputName.Value(),
@@ -791,7 +791,11 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 
 	// If fixed output, acquire write lock on output path.
 	var unlockFixedOutput func()
-	if outputPath, err := state.derivation.OutputPath(zbstore.DefaultDerivationOutputName); err == nil {
+	if state.derivation.Outputs.IsFixed() {
+		outputPath, err := state.derivation.FixedOutputPath()
+		if err != nil {
+			return fmt.Errorf("build %s: %v", drvPath, err)
+		}
 		log.Debugf(ctx, "%s has fixed output %s. Waiting for lock to check for reuse...", drvPath, outputPath)
 		unlock, err := b.server.writing.lock(ctx, outputPath)
 		if err != nil {
@@ -811,7 +815,7 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 			outputs := zbstore.RealizationMap{
 				DerivationHash: state.derivationHash,
 				Realizations: map[string][]*zbstore.Realization{
-					zbstore.DefaultDerivationOutputName: {
+					zbstore.DefaultOutputName: {
 						{
 							OutputPath: outputPath,
 							// Fixed outputs don't have references.
@@ -1511,7 +1515,7 @@ func runSubprocess(ctx context.Context, invocation *builderInvocation) error {
 func outputPathRewrites(outputMap map[string]zbstore.Path) iter.Seq2[string, zbstore.Path] {
 	return func(yield func(string, zbstore.Path) bool) {
 		for outputName, outputPath := range outputMap {
-			placeholder := zbstore.HashPlaceholder(outputName)
+			placeholder := zbstore.OutputPlaceholder(outputName)
 			if !yield(placeholder, outputPath) {
 				return
 			}
@@ -1525,7 +1529,7 @@ func derivationInputRewrites(drv *zbstore.Derivation, realization func(ref zbsto
 	// TODO(maybe): Also rewrite transitive derivation hashes?
 	result := make(map[string]zbstore.Path)
 	for ref := range drv.InputDerivationOutputs() {
-		placeholder := zbstore.UnknownCAOutputPlaceholder(ref)
+		placeholder := ref.Placeholder()
 		rpath, err := realization(ref)
 		if err != nil {
 			return nil, fmt.Errorf("compute input rewrites: %v", err)
@@ -1538,45 +1542,40 @@ func derivationInputRewrites(drv *zbstore.Derivation, realization func(ref zbsto
 // hasPlaceholders reports whether s contains any placeholders
 // that would be substituted when evaluated for drv.
 func hasPlaceholders(drv *zbstore.Derivation, s string) bool {
-	for outputName := range drv.Outputs {
-		if strings.Contains(s, zbstore.HashPlaceholder(outputName)) {
+	for outputName := range drv.Outputs.Names() {
+		if strings.Contains(s, zbstore.OutputPlaceholder(outputName)) {
 			return true
 		}
 	}
 	for ref := range drv.InputDerivationOutputs() {
-		if strings.Contains(s, zbstore.UnknownCAOutputPlaceholder(ref)) {
+		if strings.Contains(s, ref.Placeholder()) {
 			return true
 		}
 	}
 	return false
 }
 
-func tempOutputPaths(drvPath zbstore.Path, outputs map[string]*zbstore.DerivationOutputType) (map[string]zbstore.Path, error) {
-	fakeDrv := &zbstore.Derivation{
-		Dir:     drvPath.Dir(),
-		Outputs: outputs,
-	}
-	var ok bool
-	fakeDrv.Name, ok = drvPath.DerivationName()
+func tempOutputPaths(drvPath zbstore.Path, outputs zbstore.Outputs) (map[string]zbstore.Path, error) {
+	drvName, ok := drvPath.DerivationName()
 	if !ok {
 		return nil, fmt.Errorf("compute output paths for %s: not a derivation", drvPath)
 	}
 
 	paths := make(map[string]zbstore.Path)
-	for outName := range outputs {
-		if p, err := fakeDrv.OutputPath(outName); err == nil {
-			paths[outName] = p
+	for output := range outputs.All(drvPath.Dir(), drvName) {
+		if output.Path != "" {
+			paths[output.Name] = output.Path
 			continue
 		}
 
 		tp, err := tempPath(zbstore.OutputReference{
 			DrvPath:    drvPath,
-			OutputName: outName,
+			OutputName: output.Name,
 		})
 		if err != nil {
 			return nil, err
 		}
-		paths[outName] = tp
+		paths[output.Name] = tp
 	}
 	return paths, nil
 }
@@ -1594,14 +1593,13 @@ func (b *builder) postprocess(ctx context.Context, conn *sqlite.Conn, output zbs
 	if drv == nil {
 		return nil, fmt.Errorf("post-process %v: unknown derivation", output)
 	}
-	outputType, hasOutput := drv.Outputs[output.OutputName]
-	if !hasOutput {
+	if !drv.Outputs.Has(output.OutputName) {
 		return nil, fmt.Errorf("post-process %v: no such output", output)
 	}
 
 	var info *zbstore.ObjectInfo
 	var err error
-	if ca, ok := outputType.FixedCA(); ok {
+	if ca, isFixed := drv.Outputs.FixedContentAddress(); isFixed {
 		if unlockBuildPath == nil {
 			return nil, fmt.Errorf("post-process %v: write lock was not held", output)
 		}
