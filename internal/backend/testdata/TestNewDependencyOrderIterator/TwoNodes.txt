@@ -1,0 +1,26 @@
+{
+  "DesiredOutputs": [
+    {"DrvName": "jbdw7m7lzsw01d62h6x9miip818b2al2-foo.txt.drv", "OutputName": "out"},
+    {"DrvName": "098mrfqmc00zg5ndnngx8srkiwhyn012-bar.txt.drv", "OutputName": "out"},
+  ],
+  "Roots": [
+    "jbdw7m7lzsw01d62h6x9miip818b2al2-foo.txt.drv",
+    "098mrfqmc00zg5ndnngx8srkiwhyn012-bar.txt.drv",
+  ],
+  "Want": [
+    "jbdw7m7lzsw01d62h6x9miip818b2al2-foo.txt.drv",
+    "098mrfqmc00zg5ndnngx8srkiwhyn012-bar.txt.drv",
+  ],
+}
+-- jbdw7m7lzsw01d62h6x9miip818b2al2-foo.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [],"x86_64-unknown-linux","/usr/bin/false",[],[]
+)
+-- 098mrfqmc00zg5ndnngx8srkiwhyn012-bar.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [],"x86_64-unknown-linux","/usr/bin/false",[],[]
+)

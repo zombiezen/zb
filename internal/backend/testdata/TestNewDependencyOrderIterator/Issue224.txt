@@ -1,0 +1,44 @@
+{
+  "DesiredOutputs": [
+    {"DrvName": "jnqrhhv509i0zivg7gcvn87lfinv88wd-d.txt.drv", "OutputName": "out"},
+  ],
+  "Roots": [
+    "ixl320kh6f1m7v7n3fmdhi92myzh5bwy-a.txt.drv",
+    "08vnr28ryxry3q8b587x5lknrjhf61w7-c.txt.drv",
+  ],
+  "Want": [
+    "ixl320kh6f1m7v7n3fmdhi92myzh5bwy-a.txt.drv",
+    "08vnr28ryxry3q8b587x5lknrjhf61w7-c.txt.drv",
+    "jnqrhhv509i0zivg7gcvn87lfinv88wd-d.txt.drv",
+  ],
+}
+-- ixl320kh6f1m7v7n3fmdhi92myzh5bwy-a.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [],"x86_64-unknown-linux","/usr/bin/false",[],[]
+)
+-- b6sa4fywb25rm66cvrk3vql6mv2v060i-b.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [],"x86_64-unknown-linux","/usr/bin/false",[],[]
+)
+-- 08vnr28ryxry3q8b587x5lknrjhf61w7-c.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [
+    ("/opt/zb/store/b6sa4fywb25rm66cvrk3vql6mv2v060i-b.txt.drv", ["out"]),
+    ("/opt/zb/store/ixl320kh6f1m7v7n3fmdhi92myzh5bwy-a.txt.drv", ["out"])
+  ],
+  [],"x86_64-unknown-linux","/usr/bin/false",[],[]
+)
+-- jnqrhhv509i0zivg7gcvn87lfinv88wd-d.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [
+    ("/opt/zb/store/08vnr28ryxry3q8b587x5lknrjhf61w7-c.txt.drv", ["out"]),
+    ("/opt/zb/store/ixl320kh6f1m7v7n3fmdhi92myzh5bwy-a.txt.drv", ["out"])
+  ],
+  [],"x86_64-unknown-linux","/usr/bin/false",[],[]
+)

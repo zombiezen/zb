@@ -8,13 +8,20 @@ import (
 	"fmt"
 	"iter"
 	"maps"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"unique"
 
+	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/tailscale/hujson"
+	"golang.org/x/tools/txtar"
+	"zb.256lights.llc/pkg/internal/storetest"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -256,139 +263,95 @@ func TestAnalyze(t *testing.T) {
 }
 
 func TestNewDependencyOrderIterator(t *testing.T) {
-	tests := []struct {
-		name           string
-		derivations    []*zbstore.Derivation
-		desiredOutputs map[string]sets.Set[string]
-		roots          []string
-		want           []string
-	}{
-		{
-			name: "Empty",
-			want: []string{},
-		},
-		{
-			name: "TwoNodes",
-			derivations: []*zbstore.Derivation{
-				{
-					Name:    "foo.txt",
-					Dir:     zbstore.DefaultUnixDirectory,
-					System:  system.Current().String(),
-					Outputs: zbstore.DefaultFloatingOutput(),
-				},
-				{
-					Name:    "bar.txt",
-					Dir:     zbstore.DefaultUnixDirectory,
-					System:  system.Current().String(),
-					Outputs: zbstore.DefaultFloatingOutput(),
-				},
-			},
-			desiredOutputs: map[string]sets.Set[string]{
-				"foo.txt": sets.New("out"),
-				"bar.txt": sets.New("out"),
-			},
-			roots: []string{"foo.txt", "bar.txt"},
-			want:  []string{"foo.txt", "bar.txt"},
-		},
-		{
-			name: "Chain",
-			derivations: []*zbstore.Derivation{
-				{
-					Name:    "foo.txt",
-					Dir:     zbstore.DefaultUnixDirectory,
-					System:  system.Current().String(),
-					Outputs: zbstore.DefaultFloatingOutput(),
-				},
-				{
-					Name:   "bar.txt",
-					Dir:    zbstore.DefaultUnixDirectory,
-					System: system.Current().String(),
-					InputDerivations: map[zbstore.Path]*sets.Sorted[string]{
-						"foo.txt": sets.NewSorted("out"),
-					},
-					Outputs: zbstore.DefaultFloatingOutput(),
-				},
-			},
-			desiredOutputs: map[string]sets.Set[string]{
-				"foo.txt": sets.New("out"),
-				"bar.txt": sets.New("out"),
-			},
-			roots: []string{"foo.txt", "bar.txt"},
-			want:  []string{"foo.txt", "bar.txt"},
-		},
-		{
-			name: "Issue224",
-			derivations: []*zbstore.Derivation{
-				{
-					Name:    "a.txt",
-					Dir:     zbstore.DefaultUnixDirectory,
-					System:  system.Current().String(),
-					Outputs: zbstore.DefaultFloatingOutput(),
-				},
-				{
-					Name:    "b.txt",
-					Dir:     zbstore.DefaultUnixDirectory,
-					System:  system.Current().String(),
-					Outputs: zbstore.DefaultFloatingOutput(),
-				},
-				{
-					Name:   "c.txt",
-					Dir:    zbstore.DefaultUnixDirectory,
-					System: system.Current().String(),
-					InputDerivations: map[zbstore.Path]*sets.Sorted[string]{
-						"a.txt": sets.NewSorted("out"),
-						"b.txt": sets.NewSorted("out"),
-					},
-					Outputs: zbstore.DefaultFloatingOutput(),
-				},
-				{
-					Name:   "d.txt",
-					Dir:    zbstore.DefaultUnixDirectory,
-					System: system.Current().String(),
-					InputDerivations: map[zbstore.Path]*sets.Sorted[string]{
-						"a.txt": sets.NewSorted("out"),
-						"c.txt": sets.NewSorted("out"),
-					},
-					Outputs: zbstore.DefaultFloatingOutput(),
-				},
-			},
-			desiredOutputs: map[string]sets.Set[string]{
-				"d.txt": sets.New("out"),
-			},
-			roots: []string{"a.txt", "c.txt"},
-			want:  []string{"a.txt", "c.txt", "d.txt"},
-		},
+	t.Parallel()
+
+	testDataDir := filepath.Join("testdata", "TestNewDependencyOrderIterator")
+	listing, err := os.ReadDir(testDataDir)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			derivations, err := rewriteDerivationsForGraphTest(test.derivations)
+	for _, entry := range listing {
+		fileName := entry.Name()
+		if entry.IsDir() || strings.HasPrefix(fileName, ".") {
+			continue
+		}
+		testName, isTXTAR := strings.CutSuffix(fileName, ".txt")
+		if !isTXTAR {
+			continue
+		}
+		fileName = filepath.Join(testDataDir, fileName)
+
+		t.Run(testName, func(t *testing.T) {
+			archive, err := txtar.ParseFile(fileName)
 			if err != nil {
 				t.Fatal(err)
 			}
-			desiredOutputs, err := rewriteDesiredOutputsForGraphTest(derivations, test.desiredOutputs)
+			store, err := storetest.TxtarObjects(zbstore.DefaultUnixDirectory, archive.Files)
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("%s: %v", fileName, err)
 			}
-			g, err := analyze(derivations, desiredOutputs)
+			derivations := make(map[zbstore.Path]*zbstore.Derivation)
+			for _, object := range store.BlobSlice {
+				if _, isDrv := object.StorePath.DerivationName(); isDrv {
+					drv, err := zbstore.ParseDerivationObject(t.Context(), object)
+					if err != nil {
+						t.Fatal(err)
+					}
+					derivations[object.StorePath] = drv
+				}
+			}
+
+			jsonData, err := hujson.Standardize(archive.Comment)
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("%s: %v", fileName, err)
 			}
-			roots := make(sets.Set[zbstore.Path], len(test.roots))
-			for _, name := range test.roots {
-				p, err := pathForDrvName(maps.Keys(derivations), name)
-				if err != nil {
-					t.Fatal(err)
+			var test struct {
+				DesiredOutputs []struct {
+					DrvName    string
+					OutputName string
+				}
+				Roots []string
+				Want  []string
+			}
+			if err := jsonv2.Unmarshal(jsonData, &test, jsonv2.RejectUnknownMembers(true)); err != nil {
+				t.Fatalf("%s: %v", fileName, err)
+			}
+			desiredOutputs := make(sets.Set[zbstore.OutputReference], len(test.DesiredOutputs))
+			for _, ref := range test.DesiredOutputs {
+				drvPath := store.Rewrites[ref.DrvName]
+				if drvPath == "" {
+					t.Errorf("%s: unknown derivation %+q", fileName, ref.DrvName)
+					continue
+				}
+				desiredOutputs.Add(zbstore.OutputReference{
+					DrvPath:    drvPath,
+					OutputName: ref.OutputName,
+				})
+			}
+			roots := make(sets.Set[zbstore.Path], len(test.Roots))
+			for _, name := range test.Roots {
+				p := store.Rewrites[name]
+				if p == "" {
+					t.Errorf("%s: unknown derivation %+q", fileName, name)
 				}
 				roots.Add(p)
 			}
-			want := make([]zbstore.Path, 0, len(test.want))
-			for _, name := range test.want {
-				p, err := pathForDrvName(maps.Keys(derivations), name)
-				if err != nil {
-					t.Fatal(err)
+			want := make([]zbstore.Path, 0, len(test.Want))
+			for _, name := range test.Want {
+				p := store.Rewrites[name]
+				if p == "" {
+					t.Errorf("%s: unknown derivation %+q", fileName, name)
 				}
 				want = append(want, p)
+			}
+			if t.Failed() {
+				return
+			}
+
+			g, err := analyze(derivations, desiredOutputs)
+			if err != nil {
+				t.Fatal(err)
 			}
 
 			ctx := t.Context()
