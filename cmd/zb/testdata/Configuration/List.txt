@@ -1,0 +1,2 @@
+zb configuration get
+stdout '\A\{(?s:.)*\}\n\z'

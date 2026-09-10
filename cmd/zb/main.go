@@ -50,13 +50,14 @@ type zbCommand struct {
 	Config       globalConfig  `kong:"embed"`
 	ExtraConfigs []string      `kong:"name=config,sep=none,placeholder=path,help=Load configuration file(s). (Can be passed multiple times.)"`
 
-	Build      buildCommand      `kong:"cmd"`
-	Eval       evalCommand       `kong:"cmd"`
-	Derivation derivationCommand `kong:"cmd"`
-	Store      storeCommand      `kong:"cmd"`
-	Key        keyCommand        `kong:"cmd"`
-	Serve      serveCommand      `kong:"cmd"`
-	NAR        narCommand        `kong:"cmd"`
+	Build         buildCommand         `kong:"cmd"`
+	Configuration configurationCommand `kong:"cmd,aliases=config"`
+	Eval          evalCommand          `kong:"cmd"`
+	Derivation    derivationCommand    `kong:"cmd"`
+	Store         storeCommand         `kong:"cmd"`
+	Key           keyCommand           `kong:"cmd"`
+	Serve         serveCommand         `kong:"cmd"`
+	NAR           narCommand           `kong:"cmd"`
 
 	Completion kongcompletion.Completion `kong:"cmd"`
 
@@ -88,6 +89,7 @@ func (c *zbCommand) newKong() (*kong.Kong, error) {
 		kong.BindToProvider((*zbCommand).ProvideEnvLookupFunc),
 		kong.BindSingletonProvider(notifyDrainSignal),
 		kong.TypeMapper(reflect.TypeFor[sets.Set[string]](), kong.MapperFunc(mapStringSet)),
+		kong.TypeMapper(reflect.TypeFor[jsontext.Pointer](), kong.MapperFunc(mapJSONPointer)),
 		kong.NamedMapper("pathmap", kong.MapperFunc(mapPathMap)),
 		kong.NamedMapper("nativeStorePath", kong.MapperFunc(func(dc *kong.DecodeContext, target reflect.Value) error {
 			return mapNativeStorePath(dc, c.workdir, target)
@@ -132,17 +134,8 @@ func (c *zbCommand) ProvideStandardStreams(k *kong.Kong) *standardStreams {
 	}
 }
 
-func (c *zbCommand) BeforeApply(kc *kong.Context, p *kong.Path) error {
-	configFlag := findFlagByName("config", slices.Values(p.Flags))
-	configValue := kc.Value(&kong.Path{
-		Parent: p.Node(),
-		Flag:   configFlag,
-	})
-	if configValue.IsValid() {
-		configFlag.Apply(configValue)
-	}
-
-	configFilePaths := iter.Seq[string](func(yield func(string) bool) {
+func (c *zbCommand) configFilePaths() iter.Seq[string] {
+	return func(yield func(string) bool) {
 		for dir := range c.lookupEnv.userConfigDirs() {
 			if !yield(filepath.Join(resolvePath(c.workdir, dir), "zb", "config.json")) {
 				return
@@ -161,15 +154,39 @@ func (c *zbCommand) BeforeApply(kc *kong.Context, p *kong.Path) error {
 				return
 			}
 		}
+	}
+}
+
+func (c *zbCommand) outputConfigFilePath() (string, error) {
+	dir, err := c.lookupEnv.userConfigHome()
+	if err != nil {
+		return "", err
+	}
+	defaultPath := filepath.Join(resolvePath(c.workdir, dir), "zb", "config.jwcc")
+	if _, err := os.Stat(defaultPath); errors.Is(err, os.ErrNotExist) {
+		fallbackPath := filepath.Join(resolvePath(c.workdir, dir), "zb", "config.json")
+		if _, err := os.Stat(defaultPath); !errors.Is(err, os.ErrNotExist) {
+			return fallbackPath, nil
+		}
+	}
+	return defaultPath, nil
+}
+
+func (c *zbCommand) BeforeApply(kc *kong.Context, p *kong.Path) error {
+	configFlag := findFlagByName("config", slices.Values(p.Flags))
+	configValue := kc.Value(&kong.Path{
+		Parent: p.Node(),
+		Flag:   configFlag,
 	})
-	if err := c.Config.mergeFiles(configFilePaths); err != nil {
+	if configValue.IsValid() {
+		configFlag.Apply(configValue)
+	}
+	if err := c.Config.mergeFiles(c.configFilePaths()); err != nil {
 		return err
 	}
-
 	if err := c.Config.mergeEnvironment(c.lookupEnv); err != nil {
 		return err
 	}
-
 	return nil
 }
 

@@ -1,0 +1,19 @@
+# Should include user configuration paths.
+zb configuration path
+[!windows] stdout ^$HOME\Q/.config/zb/config.json\E$
+[!windows] stdout ^$HOME\Q/.config/zb/config.jwcc\E$
+[windows] stdout ^$AppData\Q\.config\zb\config.json\E$
+[windows] stdout ^$AppData\Q\.config\zb\config.jwcc\E$
+
+# Pass command-line flag.
+[!windows] zb configuration path --config $HOME/foo/bar.json
+[!windows] stdout \A$HOME\Q/foo/bar.json\E$
+[windows] zb configuration path --config $UserProfile\foo\bar.json
+[windows] stdout \A$UserProfile\Q\foo\bar.json\E$
+
+# Set environment variable.
+[!windows] env ZB_CONFIG_FILE=$HOME/foo/bar.json
+[windows] env ZB_CONFIG_FILE=$UserProfile\foo\bar.json
+zb configuration path
+[!windows] stdout \A$HOME\Q/foo/bar.json\E$
+[windows] stdout \A$UserProfile\Q\foo\bar.json\E$

@@ -637,13 +637,32 @@ func (f envLookupFunc) tempDir() string {
 	return "/tmp"
 }
 
+func (f envLookupFunc) userConfigHome() (string, error) {
+	if runtime.GOOS == "windows" {
+		dir := f.get("AppData")
+		if dir == "" {
+			return "", errors.New("%AppData% is not defined")
+		}
+		return dir, nil
+	}
+	dir := f.get("XDG_CONFIG_HOME")
+	if dir == "" {
+		home := f.get("HOME")
+		if home == "" {
+			return "", errors.New("neither $XDG_CONFIG_HOME nor $HOME are defined")
+		}
+		dir = filepath.Join(home, ".config")
+	}
+	return dir, nil
+}
+
 // userConfigDirs returns a sequence of configuration directory paths
 // in increasing order of preference
 // (i.e. later entries should override earlier entries).
 func (f envLookupFunc) userConfigDirs() iter.Seq[string] {
 	if runtime.GOOS == "windows" {
 		return func(yield func(string) bool) {
-			if dir := f.get("AppData"); dir != "" {
+			if dir, err := f.userConfigHome(); err == nil {
 				yield(dir)
 			}
 		}
@@ -660,15 +679,9 @@ func (f envLookupFunc) userConfigDirs() iter.Seq[string] {
 				return
 			}
 		}
-		dir := f.get("XDG_CONFIG_HOME")
-		if dir == "" {
-			home := f.get("HOME")
-			if home == "" {
-				return
-			}
-			dir = filepath.Join(home, ".config")
+		if dir, err := f.userConfigHome(); err == nil {
+			yield(dir)
 		}
-		yield(dir)
 	}
 }
 

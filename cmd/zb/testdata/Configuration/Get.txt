@@ -1,0 +1,22 @@
+# Read from default configuration.
+zb configuration get debug
+stdout '\Afalse\n\z'
+
+# Read from user-specified file.
+zb configuration get --config=foo.json debug
+stdout '\Atrue\n\z'
+
+# Read path from user-specified file.
+zb configuration get --config=foo.json server.download.url
+stdout '\A"http://www.example.com"\n\z'
+
+# Fail for unset setting.
+! zb configuration get bork
+
+-- foo.json --
+{
+  "debug": true,
+  "server": {
+    "download": "http://www.example.com"
+  }
+}
