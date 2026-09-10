@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -135,9 +136,23 @@ func TestEndToEnd(t *testing.T) {
 				},
 				func(state *script.State, args ...string) (script.WaitFunc, error) {
 					c := &zbCommand{
-						stdin:     bytebuffer.Null{},
-						workdir:   state.Getwd(),
-						lookupEnv: state.LookupEnv,
+						stdin:   bytebuffer.Null{},
+						workdir: state.Getwd(),
+						lookupEnv: func(key string) (string, bool) {
+							v, ok := state.LookupEnv(key)
+							if !ok && runtime.GOOS == "windows" {
+								// Windows environment variables are case-insensitive.
+								upperKey := strings.ToUpper(key)
+								for _, kv := range slices.Backward(state.Environ()) {
+									currKey, currValue, _ := strings.Cut(kv, "=")
+									if strings.ToUpper(currKey) == upperKey {
+										v, ok = currValue, true
+										break
+									}
+								}
+							}
+							return v, ok
+						},
 					}
 					k, err := c.newKong()
 					if err != nil {
