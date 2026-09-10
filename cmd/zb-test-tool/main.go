@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"iter"
@@ -208,7 +209,65 @@ func (c *derivationFixedOutputCommand) Run(kc *kong.Context) error {
 }
 
 type txtarCommand struct {
-	FillSystems *txtarFillSystemsCommand `kong:"cmd"`
+	NewDerivation *txtarNewDerivationCommand `kong:"cmd"`
+	FillSystems   *txtarFillSystemsCommand   `kong:"cmd"`
+}
+
+type txtarNewDerivationCommand struct {
+	Names      []string        `kong:"name=name,arg,help=Name(s) of derivations to generate."`
+	Systems    []system.System `kong:"name=system,default='x86_64-linux,x86_64-pc-windows'"`
+	OutputPath string          `kong:"name=output,short=o,default=-,placeholder=FILE,help=Write to a file instead of standard output."`
+}
+
+func (c *txtarNewDerivationCommand) Signature() string {
+	return `kong:"cmd,help=Generate a new derivation."`
+}
+
+func (c *txtarNewDerivationCommand) Run(kc *kong.Context) error {
+	archive := new(txtar.Archive)
+	for _, name := range c.Names {
+		for _, system := range c.Systems {
+			drv := &zbstore.Derivation{
+				Dir:     zbstore.DefaultUnixDirectory,
+				Name:    name,
+				System:  system.String(),
+				Builder: "/bin/sh",
+				Args:    []string{"-c", ":"},
+				Env: map[string]string{
+					"out": zbstore.OutputPlaceholder(zbstore.DefaultOutputName),
+				},
+				Outputs: zbstore.DefaultFloatingOutput(),
+			}
+			if system.OS.IsWindows() {
+				drv.Dir = zbstore.DefaultWindowsDirectory
+				drv.Builder = `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
+				drv.Args = []string{"-Command", "exit"}
+			}
+			archive.Files = append(archive.Files, txtar.File{
+				Name: string(appendNewDigest(nil)) + "-" + name + zbstore.DerivationExt,
+				Data: marshalIndentDerivation(drv),
+			})
+		}
+	}
+
+	output := txtar.Format(archive)
+	if c.OutputPath == "" || c.OutputPath == "-" {
+		if _, err := kc.Stdout.Write(output); err != nil {
+			return err
+		}
+	} else {
+		f, err := os.Create(c.OutputPath)
+		if err != nil {
+			return err
+		}
+		_, writeError := f.Write(output)
+		closeError := f.Close()
+		if writeError != nil || closeError != nil {
+			return errors.Join(writeError, closeError)
+		}
+	}
+
+	return nil
 }
 
 type txtarFillSystemsCommand struct {
