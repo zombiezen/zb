@@ -177,11 +177,8 @@ type dependencyOrderIterator struct {
 	waiting  chan struct{}
 }
 
-// newDependencyOrderIterator returns a new [*dependencyOrderIterator]
-// that starts at the given paths.
-// Any input derivations for the derivations in roots
-// are treated as if they've already been processed,
-// as long as they do not depend on other derivations in roots.
+// newDependencyOrderIterator returns a new [*dependencyOrderIterator].
+// TODO(now)
 func newDependencyOrderIterator(g *dependencyGraph, roots iter.Seq[zbstore.Path]) *dependencyOrderIterator {
 	type stackEntry struct {
 		path     zbstore.Path
@@ -199,16 +196,16 @@ func newDependencyOrderIterator(g *dependencyGraph, roots iter.Seq[zbstore.Path]
 		}
 	}
 
-	// Depth-first search over roots.
-	finished := make(map[zbstore.Path]bool)
+	// Depth-first search over requested roots.
 	var stack []stackEntry
-	var clearStack []zbstore.Path
+	markSet := make(sets.Set[zbstore.Path])
 	for _, root := range rootList {
 		if !rootSet.Has(root) {
 			// Skip if we already determined the root is a dependency of another root.
 			continue
 		}
 
+		markSet.Add(root)
 		node := g.nodes[root] // Guaranteed to be non-nil above.
 		stack = slices.Grow(stack, len(node.derivation.InputDerivations))
 		for drvPath := range node.derivation.InputDerivations {
@@ -221,25 +218,12 @@ func newDependencyOrderIterator(g *dependencyGraph, roots iter.Seq[zbstore.Path]
 			curr := xslices.Last(stack)
 			stack = xslices.Pop(stack, 1)
 
+			markSet.Add(root)
 			nextRoot := curr.fromRoot
 			if rootSet.Has(curr.path) {
 				// curr.fromRoot transitively depends on curr.path, another root.
 				rootSet.Delete(curr.fromRoot)
 				nextRoot = curr.path
-
-				node := g.nodes[curr.path]
-				clearStack = slices.Grow(clearStack, node.dependents.Len())
-				clearStack = slices.AppendSeq(clearStack, node.dependents.All())
-				for path := range g.transitiveDependents(&clearStack) {
-					delete(finished, path)
-				}
-			} else {
-				// Mark transitive dependencies of a root as visited.
-				// If a root depends on another root
-				// plus some other dependencies that the other root does not have,
-				// we want to make sure that we visit the pruned root.
-				// See issue #224 for details.
-				finished[curr.path] = true
 			}
 
 			if node := g.nodes[curr.path]; node != nil {
@@ -253,10 +237,30 @@ func newDependencyOrderIterator(g *dependencyGraph, roots iter.Seq[zbstore.Path]
 			}
 		}
 	}
+
+	finished := make(map[zbstore.Path]bool)
+	for curr := range markSet {
+		node := g.nodes[curr]
+		hasUnmarkedDependents := false
+		for rdep := range node.dependents {
+			if !markSet.Has(rdep) {
+				hasUnmarkedDependents = true
+				break
+			}
+		}
+		if len(node.dependents) > 0 && !hasUnmarkedDependents {
+			finished[curr] = true
+		}
+	}
+
 	rootList = slices.DeleteFunc(rootList, func(p zbstore.Path) bool {
 		return !rootSet.Has(p)
 	})
-
+	for root := range g.roots {
+		if !rootSet.Has(root) && !markSet.Has(root) {
+			rootList = append(rootList, root)
+		}
+	}
 	return &dependencyOrderIterator{
 		graph:    g,
 		stack:    rootList,

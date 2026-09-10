@@ -434,7 +434,7 @@ func (b *builder) expand(drvPath zbstore.Path, drv *zbstore.Derivation, temporar
 	return expandedDrv, nil
 }
 
-// gatherRealizations attempts to gather as many realizations in the graph
+// gatherRealizations attempts to gather as many realizations in the graph as possible
 // from the local and fallback stores
 // without running any builders.
 func (b *builder) gatherRealizations(ctx context.Context, graph *dependencyGraph) error {
@@ -457,21 +457,22 @@ func (b *builder) gatherRealizations(ctx context.Context, graph *dependencyGraph
 		if err != nil {
 			if errors.Is(err, errMultipleRealizations) || errors.Is(err, errRealizationNotFound) {
 				log.Debugf(ctx, "Unable to gather realization for %s (%v)", curr, err)
-				it.finish(curr, false)
-				continue
+			} else {
+				return err
 			}
-			return err
 		}
 		it.finish(curr, true)
 	}
 }
 
 func (b *builder) gatherRealizationsForDerivation(ctx context.Context, curr zbstore.Path, node *dependencyGraphNode) (err error) {
-	conn, err := b.server.db.Get(ctx)
-	if err != nil {
-		return fmt.Errorf("realize %s: %v", curr, err)
+	if !node.derivation.Outputs.IsFixed() {
+		for ref := range node.derivation.InputDerivationOutputs() {
+			if _, err := b.lookup(ref); err != nil {
+				return fmt.Errorf("realize %s: %w", curr, errRealizationNotFound)
+			}
+		}
 	}
-	defer b.server.db.Put(conn)
 
 	drvHash, err := node.derivation.SHA256RealizationHash(b.lookup)
 	if err != nil {
@@ -513,6 +514,11 @@ func (b *builder) gatherRealizationsForDerivation(ctx context.Context, curr zbst
 	// (If the realization's store object does not exist locally, we accept that later,
 	// but we only want to fetch realizations from the fallback store
 	// if we don't have a suitable realization set locally.)
+	conn, err := b.server.db.Get(ctx)
+	if err != nil {
+		return fmt.Errorf("realize %s: %v", curr, err)
+	}
+	defer b.server.db.Put(conn)
 	p := b.newLocalOnlyPlanner()
 	p.planSeq(ctx, conn, wantEqClasses)
 	switch {
@@ -560,7 +566,10 @@ func (b *builder) gatherRealizationsForDerivation(ctx context.Context, curr zbst
 // obtainBuildRoots computes the set of derivations that can be used as a basis for building the rest of graph,
 // downloading store objects from the fallback store as needed.
 func (b *builder) obtainBuildRoots(ctx context.Context, graph *dependencyGraph) (roots sets.Set[zbstore.Path], err error) {
-	roots = make(sets.Set[zbstore.Path])
+	roots = graph.roots.Clone()
+	for {
+
+	}
 	for it := graph.iterator(); ; {
 		curr, err := it.next(ctx)
 		if err == errEndIteration {

@@ -1,0 +1,84 @@
+{
+  "DesiredOutputs": [
+    {"DrvName": "fyq1m0l06rcbs4s6qpa5h0g1w6dg31cm-out1.txt.drv", "OutputName": "out"},
+    {"DrvName": "54hksqy92cx42a7xnddxcspwmjhbs3z6-out2.txt.drv", "OutputName": "out"},
+  ],
+  "Roots": [
+    // a.txt is already covered by ab.txt.
+    "91pcwd80rlrwg504f1rfyfaap9ydlk15-a.txt.drv",
+    // b.txt also gets used in bcd.txt.
+    "hf3s2xnfn8ajv4sq0m2b8k311x01xpq0-b.txt.drv",
+    "84c8c6vrd6qw71dz7qsimr9gasknxjc7-ab.txt.drv",
+    // c.txt is an unrelated root.
+    "0s68qvndi6nsh5y58kfgrhk37hvxfw5c-c.txt.drv",
+    // Intentionally omitting d.txt. The iterator should discover it.
+  ],
+  "Want": [
+    "hf3s2xnfn8ajv4sq0m2b8k311x01xpq0-b.txt.drv",
+    "84c8c6vrd6qw71dz7qsimr9gasknxjc7-ab.txt.drv",
+    "0s68qvndi6nsh5y58kfgrhk37hvxfw5c-c.txt.drv",
+    "5n99grba2sc27n9f5jpqqygjh9hn60d6-d.txt.drv",
+    "vii6lgh1dhirs8if0aq68lgszzf01sid-bcd.txt.drv",
+    "fyq1m0l06rcbs4s6qpa5h0g1w6dg31cm-out1.txt.drv",
+    "54hksqy92cx42a7xnddxcspwmjhbs3z6-out2.txt.drv",
+  ],
+}
+-- 91pcwd80rlrwg504f1rfyfaap9ydlk15-a.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [],"x86_64-linux","/usr/bin/false",[],[]
+)
+-- hf3s2xnfn8ajv4sq0m2b8k311x01xpq0-b.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [],"x86_64-linux","/usr/bin/false",[],[]
+)
+-- 84c8c6vrd6qw71dz7qsimr9gasknxjc7-ab.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [
+    ("/opt/zb/store/91pcwd80rlrwg504f1rfyfaap9ydlk15-a.txt.drv", ["out"]),
+    ("/opt/zb/store/hf3s2xnfn8ajv4sq0m2b8k311x01xpq0-b.txt.drv", ["out"])
+  ],
+  [],"x86_64-linux","/usr/bin/false",[],[]
+)
+-- fyq1m0l06rcbs4s6qpa5h0g1w6dg31cm-out1.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [
+    ("/opt/zb/store/84c8c6vrd6qw71dz7qsimr9gasknxjc7-ab.txt.drv", ["out"])
+  ],
+  [],"x86_64-linux","/usr/bin/false",[],[]
+)
+-- 0s68qvndi6nsh5y58kfgrhk37hvxfw5c-c.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [],"x86_64-linux","/usr/bin/false",[],[]
+)
+-- 5n99grba2sc27n9f5jpqqygjh9hn60d6-d.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [],"x86_64-linux","/usr/bin/false",[],[]
+)
+-- vii6lgh1dhirs8if0aq68lgszzf01sid-bcd.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [
+    ("/opt/zb/store/0s68qvndi6nsh5y58kfgrhk37hvxfw5c-c.txt.drv", ["out"]),
+    ("/opt/zb/store/5n99grba2sc27n9f5jpqqygjh9hn60d6-d.txt.drv", ["out"]),
+    ("/opt/zb/store/hf3s2xnfn8ajv4sq0m2b8k311x01xpq0-b.txt.drv", ["out"])
+  ],
+  [],"x86_64-linux","/usr/bin/false",[],[]
+)
+-- 54hksqy92cx42a7xnddxcspwmjhbs3z6-out2.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [
+    ("/opt/zb/store/vii6lgh1dhirs8if0aq68lgszzf01sid-bcd.txt.drv", ["out"])
+  ],
+  [],"x86_64-linux","/usr/bin/false",[],[]
+)

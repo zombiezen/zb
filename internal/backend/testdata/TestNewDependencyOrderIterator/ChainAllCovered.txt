@@ -3,9 +3,11 @@
     {"DrvName": "jbdw7m7lzsw01d62h6x9miip818b2al2-foo.txt.drv", "OutputName": "out"},
     {"DrvName": "jkaln4iq4bj62hymxpcaj4mdi012r1mz-bar.txt.drv", "OutputName": "out"},
   ],
-  "Roots": [],
-  "Want": [
+  "Roots": [
     "jbdw7m7lzsw01d62h6x9miip818b2al2-foo.txt.drv",
+    "jkaln4iq4bj62hymxpcaj4mdi012r1mz-bar.txt.drv",
+  ],
+  "Want": [
     "jkaln4iq4bj62hymxpcaj4mdi012r1mz-bar.txt.drv",
   ],
 }
