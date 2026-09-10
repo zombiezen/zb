@@ -184,6 +184,28 @@ func mapNativeStorePath(dc *kong.DecodeContext, workdir string, target reflect.V
 	return nil
 }
 
+func mapJSONPointer(dc *kong.DecodeContext, target reflect.Value) error {
+	if tp := target.Type(); tp != reflect.TypeFor[jsontext.Pointer]() {
+		return fmt.Errorf("map string set: target is a %v", tp)
+	}
+	var s string
+	if err := dc.Scan.PopValueInto("string", &s); err != nil {
+		return err
+	}
+	ptr := jsontext.Pointer(s)
+	if s != "" && !strings.HasPrefix(s, "/") {
+		ptr = ""
+		for tok := range strings.SplitSeq(s, ".") {
+			ptr = ptr.AppendToken(tok)
+		}
+	}
+	if !ptr.IsValid() {
+		return fmt.Errorf("invalid json pointer %s", s)
+	}
+	target.Set(reflect.ValueOf(ptr))
+	return nil
+}
+
 // decodeSlice scans values into a slice like Kong does
 // with the given [kong.Mapper] for each element.
 func decodeSlice(dc *kong.DecodeContext, mapper kong.Mapper, target reflect.Value) error {
