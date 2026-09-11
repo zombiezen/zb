@@ -1,31 +1,87 @@
-# Backend implementation notes
+# Backend Implementation Notes
+
+## Notation
+
+### Predicates
+
+| Notation | Meaning |
+| :------- | :------ |
+| $p \land q$ | $p$ and $q$ are true. |
+| $p \lor q$ | $p$ or $q$ are true. |
+| $\lnot p$ | $p$ is false. |
+
+### Sets
+
+| Notation | Meaning |
+| :------- | :------ |
+| $\empty$ | The empty set. |
+| $\set{x}$ | The set with the single element $x$. |
+| $\set{x \mid P(x)}$ | The set for all $x$ for which predicate $P(x)$ is true. |
+| $x \in S$ | $x$ is an element of a set $S$. |
+| $x \notin S$ | $x$ is not an element of a set $S$. |
+| $\forall x \in S : P(x)$ | For all $x$ that are elements of set $S$, the predicate $P(x)$ is true. $\forall x \in \empty : P(x)$ is always true, regardless of $P(x)$. |
+| $\exists x \in S : P(x)$ | There exists an $x$ that is an element set $S$, for which the predicate $P(x)$ is true. $\exists x \in \empty : P(x)$ is always false, regardless of $P(x)$. |
+
+| Notation                        | Meaning              | Definition                                         |
+| :------------------------------ | :------------------- | :------------------------------------------------- |
+| $A \cap B$                      | Intersection         | $\set{x \| x \in A \land x \in B}$                 |
+| $\bigcap_{A \in \mathcal{S}} A$ | Intersection of Sets | $\set{x \mid \forall A \in \mathcal{S} : x \in A}$ |
+| $A \cup B$                      | Union                | $\set{x \| x \in A \lor x \in B}$                  |
+| $\bigcup_{A \in \mathcal{S}} A$ | Union of Sets        | $\set{x \mid \exists A \in \mathcal{S} : x \in A}$ |
+| $A \setminus B$                 | Difference           | $\set{x \mid x \in A \land x \notin B}$            |
+
+### Derivations
+
+- $I(x)$ is the set of derivations that have one or more outputs
+  that derivation $x$ directly depends on.
+  - $x \sim y$ is a relation equivalent to $y \in I(x)$.
+  - $\forall x : x \notin I(x)$
+- $I^+(x)$ is the transitive closure of derivations that derivation $x$ depends on.
+  - $I^+(x) = \bigcup_{i \in I(x)} i \cup I^+(i)$.
+  - $\forall x : x \notin I^+(x)$
 
 ## Build Algorithm
 
 When the backend receives a build request
 (the `RealizeRequest` from [zbstorerpc.go](../zbstorerpc/zbstorerpc.go)):
 
-1. Load the transitive closure of derivations requested into memory.
-   These should all exist on disk because the edges are store references.
+- Let $O$ be the set of derivations requested.
+- Let $F$ be the set of fixed-output derivations.
+- Let $U$ be the set of derivations $O \cup I^+(O)$.
+- Let $G$ be the directed acyclic graph with vertices $U$
+  and edges $\set{(x, y) | x \sim y}$.
+
+Then:
+
+1. Load $U$ into memory.
+   These should all exist on disk because the edges of $G$ are store references.
 
 1. **Gather existing realizations.**
    (This step produces a set of realizations
    and a map of derivations to derivation hashes.)
-   Walk the dependency graph of derivations in dependency order
+   Walk $G$ in dependency order
    (i.e. derivations with no input derivations first),
    selecting realizations and [hashing derivations][].
-   Fixed-output derivations can have realizations generated for them on the fly regardless of reuse policy,
+   Derivations can have realizations generated for them on the fly regardless of reuse policy,
    since their derivation hash is purely based on their output hash.
    New realizations may be downloaded from the fallback store
    if an output does not have any trusted realizations
    or an output does not have any local store paths.
 
 1. **Obtain build roots.**
-   Walk the derivations in dependency order
-   (i.e. derivations with no input derivations first).
-   When we encounter a derivation with outputs in the build request,
-   a derivation with missing realizations,
-   or a derivation whose dependents are missing realizations:
+
+   Let $K$ be the set of derivations that have realizations.
+   Let $D$ be the set of derivations whose realizations' outputs are present locally
+   or can be downloaded successfully from the fallback store.
+   Note that $F \subseteq K$ and $D \subseteq K$.
+
+   $$
+   v(x) = x \in F \lor (
+    (x \notin O \lor x \in D) \land
+    (\forall i \in I(x) : V(i)) \land
+    (\forall i \in U : x \sim i \land w(i))
+   )
+   $$
 
    1. Check if we have the output store object(s) in the store.
       If so, mark as a build root and continue walking.
@@ -44,7 +100,7 @@ When the backend receives a build request
       then mark that derivation as a build root.
 
 1. **Build what remains.**
-   Walk the derivations in dependency order
+   Walk $G$ in dependency order
    (i.e. derivations with no input derivations first),
    starting at each of the build roots marked in the previous step.
    For each derivation:
