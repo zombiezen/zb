@@ -46,7 +46,7 @@ func TestBufferedImporter(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want, _, err := storetest.TxtarObjects(DefaultUnixDirectory, archive.Files)
+			want, err := storetest.TxtarObjects(DefaultUnixDirectory, archive.Files)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -54,7 +54,7 @@ func TestBufferedImporter(t *testing.T) {
 			if err := got.StoreImport(ctx, bytes.NewReader(input)); err != nil {
 				t.Error(err)
 			}
-			if diff := cmp.Diff(want, got, storetest.TransformSortedSet[Path](), cmpopts.EquateEmpty()); diff != "" {
+			if diff := cmp.Diff(want.BlobSlice, got, storetest.TransformSortedSet[Path](), cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("objects (-want +got):\n%s", diff)
 			}
 		})
