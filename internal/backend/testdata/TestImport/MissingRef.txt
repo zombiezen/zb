@@ -1,0 +1,7 @@
+! exists jj24kz6i96lk2arql8642d84zsp210mv-hello.txt
+! exists mi9ryhb894675w31ycmvn3x6adk44qvx-ref.txt
+
+-- [null] jj24kz6i96lk2arql8642d84zsp210mv-hello.txt --
+Hello, World!
+-- ! mi9ryhb894675w31ycmvn3x6adk44qvx-ref.txt --
+Isn't jj24kz6i96lk2arql8642d84zsp210mv-hello.txt neat?

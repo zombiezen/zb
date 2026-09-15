@@ -80,6 +80,21 @@ func (imp *importer) WriteObject(ctx context.Context, obj zbstore.Object) error 
 		return fmt.Errorf("import %s: %v", info.StorePath, err)
 	}
 
+	for ref := range storeRefs.Others.Values() {
+		unlock, err := imp.writing.lock(ctx, ref)
+		if err != nil {
+			return fmt.Errorf("import %s: reference %s: %v", info.StorePath, ref, err)
+		}
+		_, err = storeDir.Lstat(ref.Base())
+		unlock()
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				err = zbstore.ErrNotFound
+			}
+			return fmt.Errorf("import %s: reference %s: %v", info.StorePath, ref, err)
+		}
+	}
+
 	log.Debugf(ctx, "Extracting %s.nar to %s...", info.StorePath, realPath)
 	info = info.Clone()
 	var hasher *nix.Hasher
