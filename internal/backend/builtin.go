@@ -58,12 +58,12 @@ func fetchURL(ctx context.Context, drv *zbstore.Derivation, realStoreDir string)
 	if href == "" {
 		return fmt.Errorf("missing url environment variable")
 	}
-	outputPath := drv.Env[zbstore.DefaultDerivationOutputName]
+	outputPath := drv.Env[zbstore.DefaultOutputName]
 	if outputPath == "" {
-		return fmt.Errorf("missing %s environment variable", zbstore.DefaultDerivationOutputName)
+		return fmt.Errorf("missing %s environment variable", zbstore.DefaultOutputName)
 	}
 	outputPath = strings.ReplaceAll(outputPath, string(drv.Dir), realStoreDir)
-	if !drv.Outputs[zbstore.DefaultDerivationOutputName].IsFixed() {
+	if !drv.Outputs.IsFixed() {
 		return fmt.Errorf("output is not fixed")
 	}
 	executable := drv.Env["executable"] != ""
@@ -106,9 +106,9 @@ func extract(ctx context.Context, drv *zbstore.Derivation, realStoreDir string) 
 	if !filepath.IsAbs(src) {
 		return fmt.Errorf("source %s is not absolute", src)
 	}
-	outputPath := drv.Env[zbstore.DefaultDerivationOutputName]
+	outputPath := drv.Env[zbstore.DefaultOutputName]
 	if outputPath == "" {
-		return fmt.Errorf("missing %s environment variable", zbstore.DefaultDerivationOutputName)
+		return fmt.Errorf("missing %s environment variable", zbstore.DefaultOutputName)
 	}
 	stripFirstComponent := drv.Env["stripFirstComponent"] == "1"
 

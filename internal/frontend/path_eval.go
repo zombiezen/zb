@@ -336,7 +336,7 @@ func absSourcePath(l *lua.State, workDir string, dir zbstore.Directory, path str
 			if c.outputReference.IsZero() {
 				continue
 			}
-			placeholder := zbstore.UnknownCAOutputPlaceholder(c.outputReference)
+			placeholder := c.outputReference.Placeholder()
 			slashTail, match := strings.CutPrefix(path, placeholder)
 			if !match {
 				continue
@@ -387,7 +387,7 @@ func absSourcePathWithDeps(ctx context.Context, l *lua.State, eval *Eval, filena
 		if c.outputReference.IsZero() {
 			continue
 		}
-		placeholder := zbstore.UnknownCAOutputPlaceholder(c.outputReference)
+		placeholder := c.outputReference.Placeholder()
 		if !strings.Contains(filename, placeholder) {
 			continue
 		}

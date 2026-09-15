@@ -94,7 +94,7 @@ func runSandboxed(ctx context.Context, invocation *builderInvocation) error {
 		builderUID: os.Geteuid(),
 		builderGID: os.Getegid(),
 
-		network: invocation.derivation.Outputs[zbstore.DefaultDerivationOutputName].IsFixed() ||
+		network: invocation.derivation.Outputs.IsFixed() ||
 			invocation.derivation.Env[networkVar] == "1",
 		caFile: caFile,
 		// TODO(maybe): This seems high to me.

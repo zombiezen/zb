@@ -36,12 +36,10 @@ func TestAnalyze(t *testing.T) {
 			name: "SingleNode",
 			derivations: []*zbstore.Derivation{
 				{
-					Name:   "foo.txt",
-					Dir:    zbstore.DefaultUnixDirectory,
-					System: system.Current().String(),
-					Outputs: map[string]*zbstore.DerivationOutputType{
-						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-					},
+					Name:    "foo.txt",
+					Dir:     zbstore.DefaultUnixDirectory,
+					System:  system.Current().String(),
+					Outputs: zbstore.DefaultFloatingOutput(),
 				},
 			},
 			desiredOutputs: map[string]sets.Set[string]{
@@ -60,20 +58,16 @@ func TestAnalyze(t *testing.T) {
 			name: "TwoNodes",
 			derivations: []*zbstore.Derivation{
 				{
-					Name:   "foo.txt",
-					Dir:    zbstore.DefaultUnixDirectory,
-					System: system.Current().String(),
-					Outputs: map[string]*zbstore.DerivationOutputType{
-						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-					},
+					Name:    "foo.txt",
+					Dir:     zbstore.DefaultUnixDirectory,
+					System:  system.Current().String(),
+					Outputs: zbstore.DefaultFloatingOutput(),
 				},
 				{
-					Name:   "bar.txt",
-					Dir:    zbstore.DefaultUnixDirectory,
-					System: system.Current().String(),
-					Outputs: map[string]*zbstore.DerivationOutputType{
-						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-					},
+					Name:    "bar.txt",
+					Dir:     zbstore.DefaultUnixDirectory,
+					System:  system.Current().String(),
+					Outputs: zbstore.DefaultFloatingOutput(),
 				},
 			},
 			desiredOutputs: map[string]sets.Set[string]{
@@ -96,12 +90,10 @@ func TestAnalyze(t *testing.T) {
 			name: "TwoNodeChain",
 			derivations: []*zbstore.Derivation{
 				{
-					Name:   "foo.txt",
-					Dir:    zbstore.DefaultUnixDirectory,
-					System: system.Current().String(),
-					Outputs: map[string]*zbstore.DerivationOutputType{
-						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-					},
+					Name:    "foo.txt",
+					Dir:     zbstore.DefaultUnixDirectory,
+					System:  system.Current().String(),
+					Outputs: zbstore.DefaultFloatingOutput(),
 				},
 				{
 					Name:   "bar.txt",
@@ -110,9 +102,7 @@ func TestAnalyze(t *testing.T) {
 					InputDerivations: map[zbstore.Path]*sets.Sorted[string]{
 						"foo.txt": sets.NewSorted("out"),
 					},
-					Outputs: map[string]*zbstore.DerivationOutputType{
-						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-					},
+					Outputs: zbstore.DefaultFloatingOutput(),
 				},
 			},
 			desiredOutputs: map[string]sets.Set[string]{
@@ -135,20 +125,16 @@ func TestAnalyze(t *testing.T) {
 			name: "Hinge",
 			derivations: []*zbstore.Derivation{
 				{
-					Name:   "foo.txt",
-					Dir:    zbstore.DefaultUnixDirectory,
-					System: system.Current().String(),
-					Outputs: map[string]*zbstore.DerivationOutputType{
-						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-					},
+					Name:    "foo.txt",
+					Dir:     zbstore.DefaultUnixDirectory,
+					System:  system.Current().String(),
+					Outputs: zbstore.DefaultFloatingOutput(),
 				},
 				{
-					Name:   "bar.txt",
-					Dir:    zbstore.DefaultUnixDirectory,
-					System: system.Current().String(),
-					Outputs: map[string]*zbstore.DerivationOutputType{
-						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-					},
+					Name:    "bar.txt",
+					Dir:     zbstore.DefaultUnixDirectory,
+					System:  system.Current().String(),
+					Outputs: zbstore.DefaultFloatingOutput(),
 				},
 				{
 					Name:   "baz.txt",
@@ -158,9 +144,7 @@ func TestAnalyze(t *testing.T) {
 						"foo.txt": sets.NewSorted("out"),
 						"bar.txt": sets.NewSorted("out"),
 					},
-					Outputs: map[string]*zbstore.DerivationOutputType{
-						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-					},
+					Outputs: zbstore.DefaultFloatingOutput(),
 				},
 			},
 			desiredOutputs: map[string]sets.Set[string]{
@@ -287,20 +271,16 @@ func TestNewDependencyOrderIterator(t *testing.T) {
 			name: "TwoNodes",
 			derivations: []*zbstore.Derivation{
 				{
-					Name:   "foo.txt",
-					Dir:    zbstore.DefaultUnixDirectory,
-					System: system.Current().String(),
-					Outputs: map[string]*zbstore.DerivationOutputType{
-						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-					},
+					Name:    "foo.txt",
+					Dir:     zbstore.DefaultUnixDirectory,
+					System:  system.Current().String(),
+					Outputs: zbstore.DefaultFloatingOutput(),
 				},
 				{
-					Name:   "bar.txt",
-					Dir:    zbstore.DefaultUnixDirectory,
-					System: system.Current().String(),
-					Outputs: map[string]*zbstore.DerivationOutputType{
-						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-					},
+					Name:    "bar.txt",
+					Dir:     zbstore.DefaultUnixDirectory,
+					System:  system.Current().String(),
+					Outputs: zbstore.DefaultFloatingOutput(),
 				},
 			},
 			desiredOutputs: map[string]sets.Set[string]{
@@ -314,12 +294,10 @@ func TestNewDependencyOrderIterator(t *testing.T) {
 			name: "Chain",
 			derivations: []*zbstore.Derivation{
 				{
-					Name:   "foo.txt",
-					Dir:    zbstore.DefaultUnixDirectory,
-					System: system.Current().String(),
-					Outputs: map[string]*zbstore.DerivationOutputType{
-						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-					},
+					Name:    "foo.txt",
+					Dir:     zbstore.DefaultUnixDirectory,
+					System:  system.Current().String(),
+					Outputs: zbstore.DefaultFloatingOutput(),
 				},
 				{
 					Name:   "bar.txt",
@@ -328,9 +306,7 @@ func TestNewDependencyOrderIterator(t *testing.T) {
 					InputDerivations: map[zbstore.Path]*sets.Sorted[string]{
 						"foo.txt": sets.NewSorted("out"),
 					},
-					Outputs: map[string]*zbstore.DerivationOutputType{
-						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-					},
+					Outputs: zbstore.DefaultFloatingOutput(),
 				},
 			},
 			desiredOutputs: map[string]sets.Set[string]{
@@ -344,20 +320,16 @@ func TestNewDependencyOrderIterator(t *testing.T) {
 			name: "Issue224",
 			derivations: []*zbstore.Derivation{
 				{
-					Name:   "a.txt",
-					Dir:    zbstore.DefaultUnixDirectory,
-					System: system.Current().String(),
-					Outputs: map[string]*zbstore.DerivationOutputType{
-						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-					},
+					Name:    "a.txt",
+					Dir:     zbstore.DefaultUnixDirectory,
+					System:  system.Current().String(),
+					Outputs: zbstore.DefaultFloatingOutput(),
 				},
 				{
-					Name:   "b.txt",
-					Dir:    zbstore.DefaultUnixDirectory,
-					System: system.Current().String(),
-					Outputs: map[string]*zbstore.DerivationOutputType{
-						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-					},
+					Name:    "b.txt",
+					Dir:     zbstore.DefaultUnixDirectory,
+					System:  system.Current().String(),
+					Outputs: zbstore.DefaultFloatingOutput(),
 				},
 				{
 					Name:   "c.txt",
@@ -367,9 +339,7 @@ func TestNewDependencyOrderIterator(t *testing.T) {
 						"a.txt": sets.NewSorted("out"),
 						"b.txt": sets.NewSorted("out"),
 					},
-					Outputs: map[string]*zbstore.DerivationOutputType{
-						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-					},
+					Outputs: zbstore.DefaultFloatingOutput(),
 				},
 				{
 					Name:   "d.txt",
@@ -379,9 +349,7 @@ func TestNewDependencyOrderIterator(t *testing.T) {
 						"a.txt": sets.NewSorted("out"),
 						"c.txt": sets.NewSorted("out"),
 					},
-					Outputs: map[string]*zbstore.DerivationOutputType{
-						"out": zbstore.RecursiveFileFloatingCAOutput(nix.SHA256),
-					},
+					Outputs: zbstore.DefaultFloatingOutput(),
 				},
 			},
 			desiredOutputs: map[string]sets.Set[string]{

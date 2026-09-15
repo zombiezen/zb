@@ -220,7 +220,7 @@ func newOutput(s string, sctx sets.Set[string]) (*Output, error) {
 			}
 			out.paths.Add(v.path)
 		case !v.outputReference.IsZero():
-			placeholder := zbstore.UnknownCAOutputPlaceholder(v.outputReference)
+			placeholder := v.outputReference.Placeholder()
 			if strings.Contains(s, placeholder) {
 				if out.refs == nil {
 					out.refs = make(map[zbstore.OutputReference]string)
@@ -471,7 +471,7 @@ func defaultOutputKeys(yield func(string) bool) {
 	if !yield("1") {
 		return
 	}
-	if !yield(zbstore.DefaultDerivationOutputName) {
+	if !yield(zbstore.DefaultOutputName) {
 		return
 	}
 }

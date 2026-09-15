@@ -33,7 +33,7 @@ func TestRealizationMapClone(t *testing.T) {
 		original := RealizationMap{
 			DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 			Realizations: map[string][]*Realization{
-				DefaultDerivationOutputName: {nil, nil},
+				DefaultOutputName: {nil, nil},
 			},
 		}
 		got := original.Clone()
@@ -46,7 +46,7 @@ func TestRealizationMapClone(t *testing.T) {
 		wantOriginal := RealizationMap{
 			DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 			Realizations: map[string][]*Realization{
-				DefaultDerivationOutputName: {nil, nil},
+				DefaultOutputName: {nil, nil},
 			},
 		}
 		if diff := cmp.Diff(wantOriginal, original); diff != "" {
@@ -59,7 +59,7 @@ func TestRealizationMapClone(t *testing.T) {
 			return RealizationMap{
 				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 				Realizations: map[string][]*Realization{
-					DefaultDerivationOutputName: {
+					DefaultOutputName: {
 						{
 							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
 							ReferenceClasses: []*ReferenceClass{
@@ -144,7 +144,7 @@ func TestRealizationMapCompact(t *testing.T) {
 			m: RealizationMap{
 				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 				Realizations: map[string][]*Realization{
-					DefaultDerivationOutputName: {nil, nil},
+					DefaultOutputName: {nil, nil},
 				},
 			},
 			want: RealizationMap{
@@ -156,7 +156,7 @@ func TestRealizationMapCompact(t *testing.T) {
 			m: RealizationMap{
 				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 				Realizations: map[string][]*Realization{
-					DefaultDerivationOutputName: {
+					DefaultOutputName: {
 						{
 							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
 							ReferenceClasses: []*ReferenceClass{
@@ -208,7 +208,7 @@ func TestRealizationMapCompact(t *testing.T) {
 			want: RealizationMap{
 				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 				Realizations: map[string][]*Realization{
-					DefaultDerivationOutputName: {
+					DefaultOutputName: {
 						{
 							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
 							ReferenceClasses: []*ReferenceClass{
@@ -249,7 +249,7 @@ func TestRealizationMapCompact(t *testing.T) {
 			m: RealizationMap{
 				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 				Realizations: map[string][]*Realization{
-					DefaultDerivationOutputName: {
+					DefaultOutputName: {
 						{
 							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
 							ReferenceClasses: []*ReferenceClass{
@@ -301,7 +301,7 @@ func TestRealizationMapCompact(t *testing.T) {
 			want: RealizationMap{
 				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 				Realizations: map[string][]*Realization{
-					DefaultDerivationOutputName: {
+					DefaultOutputName: {
 						{
 							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
 							ReferenceClasses: []*ReferenceClass{
@@ -374,7 +374,7 @@ func TestRealizationMapMerge(t *testing.T) {
 				return RealizationMap{
 					DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 					Realizations: map[string][]*Realization{
-						DefaultDerivationOutputName: {nil, nil},
+						DefaultOutputName: {nil, nil},
 					},
 				}
 			},
@@ -387,7 +387,7 @@ func TestRealizationMapMerge(t *testing.T) {
 			m: RealizationMap{
 				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 				Realizations: map[string][]*Realization{
-					DefaultDerivationOutputName: {
+					DefaultOutputName: {
 						{
 							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
 							ReferenceClasses: []*ReferenceClass{
@@ -419,7 +419,7 @@ func TestRealizationMapMerge(t *testing.T) {
 				return RealizationMap{
 					DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 					Realizations: map[string][]*Realization{
-						DefaultDerivationOutputName: {
+						DefaultOutputName: {
 							{
 								OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
 								ReferenceClasses: []*ReferenceClass{
@@ -448,7 +448,7 @@ func TestRealizationMapMerge(t *testing.T) {
 			want: RealizationMap{
 				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 				Realizations: map[string][]*Realization{
-					DefaultDerivationOutputName: {
+					DefaultOutputName: {
 						{
 							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
 							ReferenceClasses: []*ReferenceClass{
@@ -489,7 +489,7 @@ func TestRealizationMapMerge(t *testing.T) {
 			m: RealizationMap{
 				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 				Realizations: map[string][]*Realization{
-					DefaultDerivationOutputName: {
+					DefaultOutputName: {
 						{
 							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
 							ReferenceClasses: []*ReferenceClass{
@@ -521,7 +521,7 @@ func TestRealizationMapMerge(t *testing.T) {
 				return RealizationMap{
 					DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 					Realizations: map[string][]*Realization{
-						DefaultDerivationOutputName: {
+						DefaultOutputName: {
 							{
 								OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
 								ReferenceClasses: []*ReferenceClass{
@@ -550,7 +550,7 @@ func TestRealizationMapMerge(t *testing.T) {
 			want: RealizationMap{
 				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 				Realizations: map[string][]*Realization{
-					DefaultDerivationOutputName: {
+					DefaultOutputName: {
 						{
 							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
 							ReferenceClasses: []*ReferenceClass{
@@ -584,7 +584,7 @@ func TestRealizationMapMerge(t *testing.T) {
 			m: RealizationMap{
 				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 				Realizations: map[string][]*Realization{
-					DefaultDerivationOutputName: {
+					DefaultOutputName: {
 						{
 							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-baz",
 						},
@@ -595,7 +595,7 @@ func TestRealizationMapMerge(t *testing.T) {
 				return RealizationMap{
 					DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 					Realizations: map[string][]*Realization{
-						DefaultDerivationOutputName: {
+						DefaultOutputName: {
 							{
 								OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-foo",
 								ReferenceClasses: []*ReferenceClass{
@@ -645,7 +645,7 @@ func TestRealizationMapMerge(t *testing.T) {
 			want: RealizationMap{
 				DerivationHash: mustParseHash(t, "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 				Realizations: map[string][]*Realization{
-					DefaultDerivationOutputName: {
+					DefaultOutputName: {
 						{
 							OutputPath: "/opt/zb/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-baz",
 						},

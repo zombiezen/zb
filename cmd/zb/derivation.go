@@ -310,28 +310,22 @@ func marshalDerivationJSON(drvPath string, drv *zbstore.Derivation) ([]byte, err
 			}
 		}),
 		Outputs: maps.Collect(func(yield func(string, jsonDerivationOutputType) bool) {
-			for outputName, outputType := range drv.Outputs {
-				var j jsonDerivationOutputType
-				if p, err := drv.OutputPath(outputName); err == nil {
-					j.Path = string(p)
+			for output := range drv.Outputs.All(drv.Dir, drv.Name) {
+				j := jsonDerivationOutputType{
+					Path:          string(output.Path),
+					HashRawBase16: output.ContentAddress.Hash().RawBase16(),
 				}
-				if ht, ok := outputType.HashType(); ok {
-					j.HashType = ht.String()
-					if outputType.IsRecursiveFile() {
-						j.HashType = "r:" + j.HashType
-					}
+				if algo, ok := output.HashAlgorithm(); ok {
+					j.HashType = algo
 				}
-				if ca, ok := outputType.FixedCA(); ok {
-					j.HashRawBase16 = ca.Hash().RawBase16()
-				}
-				if !yield(outputName, j) {
+				if !yield(output.Name, j) {
 					return
 				}
 			}
 		}),
 		Placeholders: maps.Collect(func(yield func(string, jsonOutputReference) bool) {
-			for outputName := range drv.Outputs {
-				placeholder := zbstore.HashPlaceholder(outputName)
+			for outputName := range drv.Outputs.Names() {
+				placeholder := zbstore.OutputPlaceholder(outputName)
 				jref := jsonOutputReference{
 					DrvPath:    drvPath,
 					OutputName: outputName,
@@ -341,7 +335,7 @@ func marshalDerivationJSON(drvPath string, drv *zbstore.Derivation) ([]byte, err
 				}
 			}
 			for inputRef := range drv.InputDerivationOutputs() {
-				placeholder := zbstore.UnknownCAOutputPlaceholder(inputRef)
+				placeholder := inputRef.Placeholder()
 				jref := jsonOutputReference{
 					DrvPath:    string(inputRef.DrvPath),
 					OutputName: inputRef.OutputName,
