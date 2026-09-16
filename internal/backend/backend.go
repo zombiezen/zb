@@ -1099,17 +1099,19 @@ func (s *Server) fetch(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Resp
 			return
 		}
 		defer s.db.Put(conn)
-		err = s.copyFromFallback(ctx, conn, func(yield func(pathAndEquivalenceClass) bool) {
+		paths := func(yield func(pathAndEquivalenceClass) bool) {
 			for _, path := range args.Paths {
 				pe := pathAndEquivalenceClass{path: path}
 				if !yield(pe) {
 					return
 				}
 			}
-		})
-		if err != nil {
-			log.Infof(ctx, "After fetch: %v", err)
 		}
+		s.copyFromFallback(ctx, conn, paths, func(path zbstore.Path, err error) {
+			if err != nil {
+				log.Infof(ctx, "Failed to copy %s from fallback: %v", path, err)
+			}
+		})
 	})
 	if err != nil {
 		return nil, err
@@ -1149,61 +1151,92 @@ func (s *Server) fetch(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Resp
 // copyFromFallback imports any store objects identified by paths
 // that are not present in the store directory
 // from the fallback store.
-// The [equivalenceClass] values are used in error messages.
-// If any of the store objects could not be downloaded, then copyFromFallback will return an error.
-// If copyFromFallback returns an error, it will always be a [copyFromFallbackError].
-func (s *Server) copyFromFallback(ctx context.Context, conn *sqlite.Conn, paths iter.Seq[pathAndEquivalenceClass]) (err error) {
-	defer func() {
-		if err != nil {
-			err = copyFromFallbackError{err}
+// copyFromFallback calls yield with the result of every copied object.
+// yield may be called with objects not in the set of paths
+// that are references of the store objects.
+//
+// The [equivalenceClass] values are only used for error messages and logs.
+func (s *Server) copyFromFallback(ctx context.Context, conn *sqlite.Conn, paths iter.Seq[pathAndEquivalenceClass], yield func(zbstore.Path, error)) {
+	yieldedPaths := make(sets.Set[zbstore.Path])
+	originalYield := yield
+	yield = func(path zbstore.Path, err error) {
+		if !yieldedPaths.Has(path) {
+			yieldedPaths.Add(path)
+			originalYield(path, err)
 		}
-	}()
+	}
 
-	storePathsToDownload := make(map[zbstore.Path]sets.Set[equivalenceClass])
-	exists := make(sets.Set[zbstore.Path])
-	for pe := range paths {
-		if exists.Has(pe.path) {
+	storePathsToDownload := make(sets.Set[zbstore.Path])
+	var lockError error
+	nextPath, stopPaths := iter.Pull(paths)
+	defer stopPaths()
+	for {
+		pe, ok := nextPath()
+		if !ok {
+			break
+		}
+		if yieldedPaths.Has(pe.path) || storePathsToDownload.Has(pe.path) {
 			continue
 		}
-		if eqClassSet, ok := storePathsToDownload[pe.path]; ok {
-			if !pe.equivalenceClass.isZero() {
-				if eqClassSet == nil {
-					eqClassSet = make(sets.Set[equivalenceClass])
-					storePathsToDownload[pe.path] = eqClassSet
-				}
-				eqClassSet.Add(pe.equivalenceClass)
-			}
+		if lockError != nil {
+			yield(pe.path, lockError)
 			continue
 		}
 
 		log.Debugf(ctx, "Waiting for lock on %s (output of %v)...", pe.path, pe.equivalenceClass)
-		unlockInput, err := s.writing.lock(ctx, pe.path)
-		if err != nil {
-			return err
+		var unlockInput func()
+		unlockInput, lockError = s.writing.lock(ctx, pe.path)
+		if lockError != nil {
+			yield(pe.path, lockError)
+			continue
 		}
-		_, err = os.Lstat(s.realPath(pe.path))
+		_, err := os.Lstat(s.realPath(pe.path))
 		unlockInput()
-		log.Debugf(ctx, "%s exists=%t (output of %v)", pe.path, err == nil, pe.equivalenceClass)
-		if err == nil {
-			exists.Add(pe.path)
-		} else if pe.equivalenceClass.isZero() {
-			if _, ok := storePathsToDownload[pe.path]; !ok {
-				storePathsToDownload[pe.path] = nil
-			}
+		if errors.Is(err, os.ErrNotExist) {
+			storePathsToDownload.Add(pe.path)
 		} else {
-			addToMultiMap(storePathsToDownload, pe.path, pe.equivalenceClass)
+			if err == nil {
+				log.Debugf(ctx, "%s (output of %v) exists=true", pe.path, pe.equivalenceClass)
+			} else {
+				log.Debugf(ctx, "%s (output of %v) exists=false error=%v", pe.path, pe.equivalenceClass, err)
+			}
+			yield(pe.path, err)
 		}
 	}
+	stopPaths()
 
+	if lockError != nil {
+		for path := range storePathsToDownload {
+			yield(path, lockError)
+		}
+		return
+	}
 	if len(storePathsToDownload) == 0 {
-		return nil
+		return
 	}
 
-	recv := s.newImporter(newSingleConnectionGetter(conn))
-	err = zbstore.Copy(ctx, recv, s.fallback, sets.Collect(maps.Keys(storePathsToDownload)), nil)
-	if err != nil {
-		return fmt.Errorf("failed to copy from fallback store: %v", err)
+	log.Debugf(ctx, "Copying %v from fallback store...", storePathsToDownload)
+	fc := &fallbackCopier{
+		yield:  yield,
+		writer: s.newImporter(newSingleConnectionGetter(conn)),
 	}
+	copyError := zbstore.Copy(ctx, fc, s.fallback, storePathsToDownload, nil)
+	for path := range storePathsToDownload {
+		yield(path, copyError)
+	}
+}
+
+type fallbackCopier struct {
+	writer zbstore.ObjectWriter
+	yield  func(zbstore.Path, error)
+}
+
+// WriteObject writes the object to the underlying [zbstore.ObjectWriter]
+// and calls yield with the object's path and the error that occurred.
+// WriteObject never returns an error.
+func (fc *fallbackCopier) WriteObject(ctx context.Context, object zbstore.Object) error {
+	err := fc.writer.WriteObject(ctx, object)
+	fc.yield(object.Info().StorePath, err)
 	return nil
 }
 
@@ -1403,16 +1436,3 @@ func (hasher *objectHasher) WriteNAR(ctx context.Context, w io.Writer) error {
 	hasher.narHash = h.SumHash()
 	return nil
 }
-
-// copyFromFallbackError is an error returned by [*Server.copyFromFallback].
-type copyFromFallbackError struct {
-	err error
-}
-
-func isCopyFromFallbackError(err error) bool {
-	_, ok := errors.AsType[copyFromFallbackError](err)
-	return ok
-}
-
-func (e copyFromFallbackError) Error() string { return e.err.Error() }
-func (e copyFromFallbackError) Unwrap() error { return e.err }

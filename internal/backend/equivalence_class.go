@@ -30,13 +30,6 @@ func newEquivalenceClass(drvHash nix.Hash, outputName string) equivalenceClass {
 	}
 }
 
-func realizationOutputReferenceKey(ref zbstore.RealizationOutputReference) equivalenceClass {
-	if ref.IsZero() {
-		return equivalenceClass{}
-	}
-	return newEquivalenceClass(ref.DerivationHash, ref.OutputName)
-}
-
 func (eqClass equivalenceClass) isZero() bool {
 	return eqClass == equivalenceClass{}
 }

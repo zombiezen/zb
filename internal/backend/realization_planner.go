@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"iter"
 	"maps"
+	"unique"
 
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
@@ -21,9 +22,9 @@ import (
 // These realizations can be stored in a map atomically with [*realizationPlanner.commit].
 type realizationPlanner struct {
 	// committed is the set of realizations that have already been selected.
-	committed map[equivalenceClass]cachedRealization
+	committed realizationMap
 	// planned is the set of realizations that are being collected.
-	planned map[equivalenceClass]cachedRealization
+	planned realizationMap
 	// absent is the set of keys of planned whose path does not exist in the store.
 	// If absent is nil, then the planner will only pick realizations that exist in the store.
 	absent sets.Set[equivalenceClass]
@@ -48,9 +49,14 @@ func (b *builder) newPlanner() *realizationPlanner {
 func (b *builder) newLocalOnlyPlanner() *realizationPlanner {
 	return &realizationPlanner{
 		committed:   b.realizations,
-		planned:     make(map[equivalenceClass]cachedRealization),
+		planned:     make(realizationMap),
 		reusePolicy: b.reusePolicy,
 	}
+}
+
+// has reports whether the derivation hash is present in p.committed or p.plan.
+func (p *realizationPlanner) has(drvHash hashKey) bool {
+	return p != nil && (p.planned.has(drvHash) || p.committed.has(drvHash))
 }
 
 // get returns the [cachedRealization] in p.committed or p.plan,
@@ -59,13 +65,11 @@ func (p *realizationPlanner) get(eqClass equivalenceClass) (_ cachedRealization,
 	if p == nil {
 		return cachedRealization{}, false
 	}
-	if r, ok := p.planned[eqClass]; ok {
-		return r, true
+	r, ok := p.planned.get(eqClass)
+	if !ok {
+		r, ok = p.committed.get(eqClass)
 	}
-	if r, ok := p.committed[eqClass]; ok {
-		return r, true
-	}
-	return cachedRealization{}, false
+	return r, ok
 }
 
 // commit copies the realizations in p.planned to p.committed,
@@ -80,30 +84,53 @@ func (p *realizationPlanner) commit() {
 	p.absent.Clear()
 }
 
-// plan finds a realization to use for a derivation output
-// from the store database
-// that is compatible with existing realizations in the builder.
-// plan sets p.error to an error that unwraps to [errRealizationNotFound]
-// if no such realization could be found,
-// or an error that unwraps to [errMultipleRealizations] if multiple such realizations were found.
-// If p.error == nil after calling plan,
-// then [*realizationPlanner.get] will have a [cachedRealization] available for eqClass.
-//
-// If p.absent is nil, then the realization must be present in the store
-// to be considered.
-// Otherwise, plan will add the set of keys added to p.planned
-// that name paths not in the store.
-//
-// plan may add realizations to p.planned for equivalence classes beyond the given one
-// because selecting a realization may imply selecting realizations from its closure.
-func (p *realizationPlanner) plan(ctx context.Context, conn *sqlite.Conn, dpe derivationPathAndEquivalenceClass) {
-	if p.error != nil {
+// planFixed stores the realization of a fixed-output derivation in p.planned.
+// planFixed will check the database for whether the object exists.
+// p.error is set to an error on failure.
+// If the planner is local-only and the object does not exist,
+// then p.error will be set to an error that unwraps to [errRealizationNotFound].
+func (p *realizationPlanner) planFixed(conn *sqlite.Conn, drvPath zbstore.Path, drvHash hashKey, outputPath zbstore.Path) {
+	if p.error != nil || p.planned.has(drvHash) {
 		return
 	}
-	if _, exists := p.get(dpe.equivalenceClass); exists {
+	dpe := derivationPathAndEquivalenceClass{
+		drvPath: drvPath,
+		equivalenceClass: equivalenceClass{
+			drvHashKey: drvHash,
+			outputName: unique.Make(zbstore.DefaultOutputName),
+		},
+	}
+	present, err := objectExists(conn, outputPath)
+	if err != nil {
+		p.error = err
 		return
 	}
+	if !present {
+		if p.absent == nil {
+			p.error = fmt.Errorf("insert fixed realization for %v: %w", dpe.toOutputReference(), errRealizationNotFound)
+			return
+		}
+		p.absent.Add(dpe.equivalenceClass)
+	}
+	p.planned.setFixed(drvHash, outputPath)
+}
 
+// planFloating finds realizations to use from the store database
+// for the given set of floating derivation outputs
+// that are compatible with existing realizations in the planner
+// and with elements in the set.
+// planFloating sets p.error to an error that unwraps to [errRealizationNotFound]
+// if no such set of realizations could be found,
+// or an error that unwraps to [errMultipleRealizations] if multiple such realizations were found.
+// If p.error == nil after planFloating returns,
+// then [*realizationPlanner.get] will return a value for all outputs.
+//
+// planFloating may add realizations to p.planned for equivalence classes beyond the given one
+// because selecting a realization may imply selecting realizations from its closure.
+func (p *realizationPlanner) planFloating(ctx context.Context, conn *sqlite.Conn, drvPath zbstore.Path, drvHash hashKey, outputNames iter.Seq[unique.Handle[string]]) {
+	if p.error != nil || p.has(drvHash) {
+		return
+	}
 	rollback, err := readonlySavepoint(conn)
 	if err != nil {
 		p.error = err
@@ -111,106 +138,87 @@ func (p *realizationPlanner) plan(ctx context.Context, conn *sqlite.Conn, dpe de
 	}
 	defer rollback()
 
-	log.Debugf(ctx, "Searching for realizations for %v...", dpe.toOutputReference())
-	presentInStore, absentFromStore, err := findPossibleRealizations(ctx, conn, dpe.equivalenceClass, p.reusePolicy)
-	if err != nil {
-		p.error = err
-		return
-	}
+	log.Debugf(ctx, "Searching for realizations for %v...", drvPath)
+	for outputName := range outputNames {
+		dpe := derivationPathAndEquivalenceClass{
+			drvPath: drvPath,
+			equivalenceClass: equivalenceClass{
+				drvHashKey: drvHash,
+				outputName: outputName,
+			},
+		}
 
-	var r cachedRealization
-	present := false
-	r.path, r.closure, err = p.pick(ctx, conn, dpe, presentInStore)
-	switch {
-	case err == nil:
-		present = true
-	case errors.Is(err, errRealizationNotFound):
-		if p.absent == nil {
-			p.error = err
-			return
-		}
-		r.path, r.closure, err = p.pick(ctx, conn, dpe, absentFromStore)
-		if errors.Is(err, errMultipleRealizations) {
-			p.error = fmt.Errorf("pick compatible realization for %v: %w", dpe.toOutputReference(), errRealizationNotFound)
-			return
-		}
+		presentInStore, absentFromStore, err := findPossibleRealizations(ctx, conn, dpe.equivalenceClass, p.reusePolicy)
 		if err != nil {
 			p.error = err
 			return
 		}
-	default:
-		p.error = err
-		return
-	}
 
-	// Now that we selected our realization, fill out the closures.
-	log.Debugf(ctx, "Using sole viable candidate %s for %v", r.path, dpe.toOutputReference())
-	for refPath, eqClasses := range r.closure {
-		refPathExists := true
-		if !present {
-			var err error
-			refPathExists, err = objectExists(conn, refPath)
-			if err != nil {
+		r := cachedRealization{outputName: outputName}
+		present := false
+		r.path, r.closure, err = p.pick(ctx, conn, dpe, presentInStore)
+		switch {
+		case err == nil:
+			present = true
+		case errors.Is(err, errRealizationNotFound):
+			if p.absent == nil {
+				p.error = err
 				return
 			}
-		}
-
-		for eqClass := range eqClasses.All() {
-			if eqClass.isZero() {
-				continue
-			}
-			if _, exists := p.get(eqClass); exists {
-				continue
-			}
-			pe := pathAndEquivalenceClass{
-				path:             refPath,
-				equivalenceClass: eqClass,
-			}
-			closureRealization := cachedRealization{
-				path:    refPath,
-				closure: make(map[zbstore.Path]sets.Set[equivalenceClass]),
-			}
-			err = closurePaths(conn, pe, func(pe pathAndEquivalenceClass) bool {
-				addToMultiMap(closureRealization.closure, pe.path, pe.equivalenceClass)
-				return true
-			})
-			if err != nil {
-				p.error = fmt.Errorf("pick compatible realization for %v: %v", dpe.toOutputReference(), err)
+			r.path, r.closure, err = p.pick(ctx, conn, dpe, absentFromStore)
+			if errors.Is(err, errMultipleRealizations) {
+				p.error = fmt.Errorf("pick compatible realization for %v: %w", dpe.toOutputReference(), errRealizationNotFound)
 				return
 			}
-			p.planned[eqClass] = closureRealization
-			if !refPathExists {
-				p.absent.Add(eqClass)
+			if err != nil {
+				p.error = err
+				return
 			}
+		default:
+			p.error = err
+			return
 		}
-	}
-}
 
-// planSeq finds a set of realizations to use for the given set of derivation outputs
-// from the store database
-// that is compatible with existing realizations in the planner
-// and with elements in the set.
-// planSeq sets p.error to an error that unwraps to [errRealizationNotFound]
-// if no such set of realizations could be found.
-// If p.error == nil after planSeq returns,
-// then [*realizationPlanner.get] will return a value for all elements of eqClasses.
-//
-// planSeq may add realizations for equivalence classes beyond the given one
-// because selecting a realization may imply selecting realizations from its closure.
-func (p *realizationPlanner) planSeq(ctx context.Context, conn *sqlite.Conn, eqClasses iter.Seq[derivationPathAndEquivalenceClass]) {
-	if p.error != nil {
-		return
-	}
-	rollback, err := readonlySavepoint(conn)
-	if err != nil {
-		p.error = err
-		return
-	}
-	defer rollback()
-	for eqClass := range eqClasses {
-		p.plan(ctx, conn, eqClass)
-		if p.error != nil {
-			break
+		// Now that we selected our realization, fill out the closures.
+		log.Debugf(ctx, "Using sole viable candidate %s for %v", r.path, dpe.toOutputReference())
+		for refPath, eqClasses := range r.closure {
+			refPathExists := true
+			if !present {
+				var err error
+				refPathExists, err = objectExists(conn, refPath)
+				if err != nil {
+					return
+				}
+			}
+
+			for eqClass := range eqClasses.All() {
+				if eqClass.isZero() {
+					continue
+				}
+				if _, exists := p.get(eqClass); exists {
+					continue
+				}
+				pe := pathAndEquivalenceClass{
+					path:             refPath,
+					equivalenceClass: eqClass,
+				}
+				closureRealization := cachedRealization{
+					path:    refPath,
+					closure: make(map[zbstore.Path]sets.Set[equivalenceClass]),
+				}
+				err = closurePaths(conn, pe, func(pe pathAndEquivalenceClass) bool {
+					addToMultiMap(closureRealization.closure, pe.path, pe.equivalenceClass)
+					return true
+				})
+				if err != nil {
+					p.error = fmt.Errorf("pick compatible realization for %v: %v", dpe.toOutputReference(), err)
+					return
+				}
+				p.planned.insert(drvHash, r)
+				if !refPathExists {
+					p.absent.Add(eqClass)
+				}
+			}
 		}
 	}
 }
