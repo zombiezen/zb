@@ -640,13 +640,17 @@ func (sc *storeCommands) runRealize(state *script.State, args ...string) (script
 
 		var resultError error
 		if got.Status == zbstorerpc.BuildSuccess {
-			if len(drvPaths) == 1 {
-				if result, err := got.ResultForPath(drvPaths[0]); err != nil {
+			for i, drvPath := range drvPaths {
+				if result, err := got.ResultForPath(drvPath); err != nil {
 					resultError = fmt.Errorf("get successful build result: %v", err)
 				} else {
 					for _, output := range result.Outputs {
 						if output.Path.Valid {
-							state.Setenv(output.Name, string(output.Path.X))
+							name := output.Name
+							if i > 0 {
+								name = fmt.Sprintf("%s%d", name, i+1)
+							}
+							state.Setenv(name, string(output.Path.X))
 						}
 					}
 				}
@@ -845,16 +849,24 @@ func hashDerivationFromFetcher(ctx context.Context, drvStore zbstore.Store, fetc
 	derivers = make(map[zbstore.Path][]zbstore.RealizationOutputReference)
 	var f func(zbstore.OutputReference) (zbstore.Path, error)
 	f = func(ref zbstore.OutputReference) (zbstore.Path, error) {
+		drvObject, err := drvStore.Object(ctx, ref.DrvPath)
+		if err != nil {
+			return "", fmt.Errorf("realization for %v: %v", ref, err)
+		}
+		drv, err := zbstore.ParseDerivationObject(ctx, drvObject)
+		if err != nil {
+			return "", fmt.Errorf("realization for %v: %v", ref, err)
+		}
+		if drv.Outputs.IsFixed() {
+			outputPath, err := drv.FixedOutputPath()
+			if err != nil {
+				return "", fmt.Errorf("realization for %v: %v", ref, err)
+			}
+			return outputPath, nil
+		}
+
 		drvHash := drvHashes[ref.DrvPath]
 		if drvHash.IsZero() {
-			drvObject, err := drvStore.Object(ctx, ref.DrvPath)
-			if err != nil {
-				return "", fmt.Errorf("realization for %v: %v", ref, err)
-			}
-			drv, err := zbstore.ParseDerivationObject(ctx, drvObject)
-			if err != nil {
-				return "", fmt.Errorf("realization for %v: %v", ref, err)
-			}
 			drvHash, err = drv.SHA256RealizationHash(f)
 			if err != nil {
 				return "", fmt.Errorf("realization for %v: %v", ref, err)

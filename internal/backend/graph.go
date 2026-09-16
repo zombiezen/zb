@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"iter"
 	"slices"
 	"sync"
 	"unique"
@@ -19,58 +18,31 @@ import (
 
 // dependencyGraph stores indices of a set of derivations that are useful for realization.
 type dependencyGraph struct {
-	want sets.Set[zbstore.OutputReference]
-	// nodes is a map of .drv file path to [*dependencyGraphNode].
-	nodes map[zbstore.Path]*dependencyGraphNode
-	// roots is the set of .drv files that have no input derivations.
-	roots sets.Set[zbstore.Path]
-}
-
-// get gets or creates a node in graph.nodes for the given path.
-// If created, then the node's derivation is set to drv.
-func (graph *dependencyGraph) get(path zbstore.Path, drv *zbstore.Derivation) *dependencyGraphNode {
-	node := graph.nodes[path]
-	if node == nil {
-		node = &dependencyGraphNode{derivation: drv}
-		graph.nodes[path] = node
-	}
-	return node
+	// nodes is a map of .drv file path to [dependencyGraphNode].
+	nodes map[zbstore.Path]dependencyGraphNode
 }
 
 // iterator returns a [*dependencyOrderIterator] over all the nodes in the graph.
 func (graph *dependencyGraph) iterator() *dependencyOrderIterator {
 	// We assume that graph.roots has been filled in properly,
 	// so we can skip the complexity in [newDependencyOrderIterator].
-	return &dependencyOrderIterator{
+	it := &dependencyOrderIterator{
 		graph:    graph,
-		stack:    slices.AppendSeq(make([]zbstore.Path, 0, graph.roots.Len()), graph.roots.All()),
 		finished: make(map[zbstore.Path]bool),
 	}
-}
-
-// transitiveDependents returns a single-use iterator over the given paths
-// and the transitive closure of all paths in the graph that depend on the given paths.
-// After iteration is finished, the paths slice will be cleared and set to length 0.
-// transitiveDependents does not guarantee ordering,
-// nor does it guarantee that it will not yield the same path more than once.
-func (graph *dependencyGraph) transitiveDependents(paths *[]zbstore.Path) iter.Seq[zbstore.Path] {
-	return func(yield func(zbstore.Path) bool) {
-		for len(*paths) > 0 {
-			curr := xslices.Last(*paths)
-			*paths = xslices.Pop(*paths, 1)
-			if !yield(curr) {
-				clear(*paths)
-				*paths = (*paths)[:0]
-				return
-			}
-			var next sets.Set[zbstore.Path]
-			if node := graph.nodes[curr]; node != nil {
-				next = node.dependents
-			}
-			*paths = slices.Grow(*paths, next.Len())
-			*paths = slices.AppendSeq(*paths, next.All())
+	rootCount := 0
+	for _, node := range graph.nodes {
+		if len(node.derivation.InputDerivations) == 0 {
+			rootCount++
 		}
 	}
+	it.stack = make([]zbstore.Path, 0, rootCount)
+	for drvPath, node := range graph.nodes {
+		if len(node.derivation.InputDerivations) == 0 {
+			it.stack = append(it.stack, drvPath)
+		}
+	}
+	return it
 }
 
 // dependencyGraphNode stores auxiliary information about a [*zbstore.Derivation].
@@ -81,14 +53,27 @@ type dependencyGraphNode struct {
 	dependents sets.Set[zbstore.Path]
 	// usedOutputs is the set of output names that a build must have realizations for.
 	usedOutputs sets.Set[unique.Handle[string]]
+	// want is true if this derivation is named in the set of desired outputs.
+	want bool
 }
 
 // analyze produces a [dependencyGraph] for the given set of desired outputs.
 func analyze(derivations map[zbstore.Path]*zbstore.Derivation, want sets.Set[zbstore.OutputReference]) (*dependencyGraph, error) {
 	result := &dependencyGraph{
-		want:  want,
-		roots: make(sets.Set[zbstore.Path]),
-		nodes: make(map[zbstore.Path]*dependencyGraphNode),
+		nodes: make(map[zbstore.Path]dependencyGraphNode),
+	}
+	get := func(path zbstore.Path, drv *zbstore.Derivation) dependencyGraphNode {
+		node := result.nodes[path]
+		if node.derivation == nil {
+			node = dependencyGraphNode{derivation: drv}
+			for ref := range want {
+				if ref.DrvPath == path {
+					node.want = true
+					break
+				}
+			}
+		}
+		return node
 	}
 
 	drvHashes := make(map[zbstore.Path]hashKey)
@@ -107,7 +92,7 @@ func analyze(derivations map[zbstore.Path]*zbstore.Derivation, want sets.Set[zbs
 			return result, fmt.Errorf("analyze %s: unknown derivation", ref.DrvPath)
 		}
 		// Ensure we have a node for every derivation.
-		result.get(ref.DrvPath, drv)
+		result.nodes[ref.DrvPath] = get(ref.DrvPath, drv)
 
 		h, err := pseudoHashDrv(drv)
 		if err != nil {
@@ -118,13 +103,12 @@ func analyze(derivations map[zbstore.Path]*zbstore.Derivation, want sets.Set[zbs
 		addToMultiMap(used, hk, unique.Make(ref.OutputName))
 
 		// Fill in reverse dependency graph.
-		if len(drv.InputDerivations) == 0 {
-			result.roots.Add(ref.DrvPath)
-		} else {
+		if len(drv.InputDerivations) > 0 {
 			for inputDrvPath, outputNames := range drv.InputDerivations {
-				inputNode := result.get(inputDrvPath, derivations[inputDrvPath])
+				inputNode := get(inputDrvPath, derivations[inputDrvPath])
 				if inputNode.dependents == nil {
 					inputNode.dependents = make(sets.Set[zbstore.Path])
+					result.nodes[inputDrvPath] = inputNode
 				}
 				inputNode.dependents.Add(ref.DrvPath)
 				for outputName := range outputNames.Values() {
@@ -151,6 +135,7 @@ func analyze(derivations map[zbstore.Path]*zbstore.Derivation, want sets.Set[zbs
 	// because of the early cutoff optimization from content-addressing.
 	for drvPath, currentNode := range result.nodes {
 		currentNode.usedOutputs = used[drvHashes[drvPath]]
+		result.nodes[drvPath] = currentNode
 	}
 
 	return result, nil
@@ -175,93 +160,6 @@ type dependencyOrderIterator struct {
 	finished map[zbstore.Path]bool
 	pending  int
 	waiting  chan struct{}
-}
-
-// newDependencyOrderIterator returns a new [*dependencyOrderIterator]
-// that starts at the given paths.
-// Any input derivations for the derivations in roots
-// are treated as if they've already been processed,
-// as long as they do not depend on other derivations in roots.
-func newDependencyOrderIterator(g *dependencyGraph, roots iter.Seq[zbstore.Path]) *dependencyOrderIterator {
-	type stackEntry struct {
-		path     zbstore.Path
-		fromRoot zbstore.Path
-	}
-
-	rootSet := make(sets.Set[zbstore.Path])
-	// Maintain a slice list so we can keep the order.
-	var rootList []zbstore.Path
-	for root := range roots {
-		// Guarantee that roots appear in the graph.
-		if !rootSet.Has(root) && g.nodes[root] != nil {
-			rootList = append(rootList, root)
-			rootSet.Add(root)
-		}
-	}
-
-	// Depth-first search over roots.
-	finished := make(map[zbstore.Path]bool)
-	var stack []stackEntry
-	var clearStack []zbstore.Path
-	for _, root := range rootList {
-		if !rootSet.Has(root) {
-			// Skip if we already determined the root is a dependency of another root.
-			continue
-		}
-
-		node := g.nodes[root] // Guaranteed to be non-nil above.
-		stack = slices.Grow(stack, len(node.derivation.InputDerivations))
-		for drvPath := range node.derivation.InputDerivations {
-			stack = append(stack, stackEntry{
-				fromRoot: root,
-				path:     drvPath,
-			})
-		}
-		for len(stack) > 0 {
-			curr := xslices.Last(stack)
-			stack = xslices.Pop(stack, 1)
-
-			nextRoot := curr.fromRoot
-			if rootSet.Has(curr.path) {
-				// curr.fromRoot transitively depends on curr.path, another root.
-				rootSet.Delete(curr.fromRoot)
-				nextRoot = curr.path
-
-				node := g.nodes[curr.path]
-				clearStack = slices.Grow(clearStack, node.dependents.Len())
-				clearStack = slices.AppendSeq(clearStack, node.dependents.All())
-				for path := range g.transitiveDependents(&clearStack) {
-					delete(finished, path)
-				}
-			} else {
-				// Mark transitive dependencies of a root as visited.
-				// If a root depends on another root
-				// plus some other dependencies that the other root does not have,
-				// we want to make sure that we visit the pruned root.
-				// See issue #224 for details.
-				finished[curr.path] = true
-			}
-
-			if node := g.nodes[curr.path]; node != nil {
-				stack = slices.Grow(stack, len(node.derivation.InputDerivations))
-				for drvPath := range node.derivation.InputDerivations {
-					stack = append(stack, stackEntry{
-						fromRoot: nextRoot,
-						path:     drvPath,
-					})
-				}
-			}
-		}
-	}
-	rootList = slices.DeleteFunc(rootList, func(p zbstore.Path) bool {
-		return !rootSet.Has(p)
-	})
-
-	return &dependencyOrderIterator{
-		graph:    g,
-		stack:    rootList,
-		finished: finished,
-	}
 }
 
 // next returns the next derivation path in dependency order.
@@ -304,7 +202,7 @@ var errEndIteration = errors.New("end iteration")
 // optionally allowing the derivation's dependents to be returned by next.
 func (it *dependencyOrderIterator) finish(path zbstore.Path, processDependents bool) {
 	node := it.graph.nodes[path]
-	if node == nil {
+	if node.derivation == nil {
 		return
 	}
 
