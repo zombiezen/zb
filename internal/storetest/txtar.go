@@ -23,13 +23,25 @@ import (
 // TxtarStore is a collection of objects parsed by [TxtarObjects].
 type TxtarStore struct {
 	BlobSlice
+	Metadata map[zbstore.Path]TxtarObjectMetadata
 	// Rewrites is a map of store object names as they appear in the txtar file
 	// to their resulting store path.
 	Rewrites map[string]zbstore.Path
+}
+
+// TxtarObjectMetadata is optional metadata attached to an object in [TxtarStore].
+type TxtarObjectMetadata struct {
 	// Labels is a set of optional strings attached to an object.
 	// They must appear before the first file in an object enclosed in brackets
 	// (e.g. "[foo]").
-	Labels map[zbstore.Path][]string
+	Labels []string
+	// ShouldFail is true if the name of the first file in an object starts with "!".
+	ShouldFail bool
+}
+
+// IsZero reports whether metadata is the zero value.
+func (metadata TxtarObjectMetadata) IsZero() bool {
+	return len(metadata.Labels) == 0 && !metadata.ShouldFail
 }
 
 // OriginalObjectName returns the placeholder store object name in the txtar file
@@ -52,11 +64,11 @@ func TxtarObjects(dir zbstore.Directory, files []txtar.File) (*TxtarStore, error
 	result := &TxtarStore{
 		BlobSlice: make(BlobSlice, 0, len(files)),
 		Rewrites:  make(map[string]zbstore.Path),
-		Labels:    make(map[zbstore.Path][]string),
+		Metadata:  make(map[zbstore.Path]TxtarObjectMetadata),
 	}
 
 	for objectFiles := range groupFilesByObject(files) {
-		labels, firstPath, fixedHash, err := parseFilename(objectFiles[0].Name)
+		metadata, firstPath, fixedHash, err := parseFilename(objectFiles[0].Name)
 		if err != nil {
 			return result, err
 		}
@@ -106,7 +118,7 @@ func TxtarObjects(dir zbstore.Directory, files []txtar.File) (*TxtarStore, error
 					ContentAddress: ca,
 				},
 			}
-			if err := addToTxtarStore(result, firstPath.objectName(), obj, labels); err != nil {
+			if err := addToTxtarStore(result, firstPath.objectName(), obj, metadata); err != nil {
 				return result, err
 			}
 			continue
@@ -122,7 +134,7 @@ func TxtarObjects(dir zbstore.Directory, files []txtar.File) (*TxtarStore, error
 			if err != nil {
 				return result, fmt.Errorf("rewrite %s: %v", firstPath, err)
 			}
-			if err := addToTxtarStore(result, firstPath.objectName(), obj, labels); err != nil {
+			if err := addToTxtarStore(result, firstPath.objectName(), obj, metadata); err != nil {
 				return result, err
 			}
 			continue
@@ -135,12 +147,12 @@ func TxtarObjects(dir zbstore.Directory, files []txtar.File) (*TxtarStore, error
 			return result, err
 		}
 		for _, other := range objectFiles[1:] {
-			otherLabels, otherFilename, otherFixedHash, err := parseFilename(other.Name)
+			otherMetadata, otherFilename, otherFixedHash, err := parseFilename(other.Name)
 			if err != nil {
 				return result, err
 			}
-			if len(otherLabels) > 0 {
-				return result, fmt.Errorf("unexpected labels on %s", otherFilename)
+			if !otherMetadata.IsZero() {
+				return result, fmt.Errorf("unexpected metadata on %s", otherFilename)
 			}
 			if !otherFixedHash.IsZero() {
 				return result, fmt.Errorf("unexpected hash on %s", otherFilename)
@@ -183,7 +195,7 @@ func TxtarObjects(dir zbstore.Directory, files []txtar.File) (*TxtarStore, error
 			}
 			copy(obj.NAR[rewrite.WriteOffset():], replacement)
 		}
-		if err := addToTxtarStore(result, firstPath.objectName(), obj, labels); err != nil {
+		if err := addToTxtarStore(result, firstPath.objectName(), obj, metadata); err != nil {
 			return result, err
 		}
 	}
@@ -212,8 +224,12 @@ func groupFilesByObject(files []txtar.File) iter.Seq[[]txtar.File] {
 	}
 }
 
-func parseFilename(name string) (labels []string, path txtarPath, fixedHash nix.Hash, err error) {
+func parseFilename(name string) (metadata TxtarObjectMetadata, path txtarPath, fixedHash nix.Hash, err error) {
 	name = strings.TrimSpace(name)
+	name, metadata.ShouldFail = strings.CutPrefix(name, "!")
+	if metadata.ShouldFail {
+		name = strings.TrimSpace(name)
+	}
 	for {
 		var hasLabel bool
 		name, hasLabel = strings.CutPrefix(name, "[")
@@ -224,9 +240,9 @@ func parseFilename(name string) (labels []string, path txtarPath, fixedHash nix.
 		var labelEnds bool
 		label, name, labelEnds = strings.Cut(name, "]")
 		if !labelEnds {
-			return nil, "", nix.Hash{}, fmt.Errorf("unclosed label %s", label)
+			return TxtarObjectMetadata{}, "", nix.Hash{}, fmt.Errorf("unclosed label %s", label)
 		}
-		labels = append(labels, label)
+		metadata.Labels = append(metadata.Labels, label)
 		name = strings.TrimLeft(name, " \t")
 	}
 
@@ -235,22 +251,22 @@ func parseFilename(name string) (labels []string, path txtarPath, fixedHash nix.
 	if hasFixedHash {
 		nameEnd := strings.LastIndex(name, "[")
 		if nameEnd == -1 {
-			return nil, "", nix.Hash{}, fmt.Errorf("invalid file name %s", originalName)
+			return TxtarObjectMetadata{}, "", nix.Hash{}, fmt.Errorf("invalid file name %s", originalName)
 		}
 		hashString := name[nameEnd+len("["):]
 		name = name[:nameEnd]
 		var err error
 		fixedHash, err = nix.ParseHash(hashString)
 		if err != nil {
-			return nil, "", nix.Hash{}, err
+			return TxtarObjectMetadata{}, "", nix.Hash{}, err
 		}
 		name = strings.TrimRight(name, " \t")
 	}
 
-	return labels, txtarPath(name), fixedHash, nil
+	return metadata, txtarPath(name), fixedHash, nil
 }
 
-func addToTxtarStore(store *TxtarStore, originalName string, object *zbstore.Blob, labels []string) error {
+func addToTxtarStore(store *TxtarStore, originalName string, object *zbstore.Blob, metadata TxtarObjectMetadata) error {
 	if otherName, exists := store.OriginalObjectName(object.StorePath); exists {
 		if otherName == originalName {
 			return fmt.Errorf("duplicate object %s", originalName)
@@ -260,8 +276,8 @@ func addToTxtarStore(store *TxtarStore, originalName string, object *zbstore.Blo
 
 	store.BlobSlice = append(store.BlobSlice, object)
 	store.Rewrites[originalName] = object.StorePath
-	if len(labels) > 0 {
-		store.Labels[object.StorePath] = labels
+	if !metadata.IsZero() {
+		store.Metadata[object.StorePath] = metadata
 	}
 	return nil
 }

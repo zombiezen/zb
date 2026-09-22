@@ -34,6 +34,7 @@ import (
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
+	"zombiezen.com/go/log"
 	"zombiezen.com/go/log/testlog"
 	"zombiezen.com/go/nix"
 )
@@ -184,30 +185,33 @@ func readTestData(dir zbstore.Directory, name string, fileSubstitutions map[stri
 
 func (data *testDataArchive) writeTo(ctx context.Context, backend, fallback zbstore.ObjectWriter) error {
 	for _, object := range data.allObjects.BlobSlice {
-		labels := data.allObjects.Labels[object.StorePath]
+		metadata := data.allObjects.Metadata[object.StorePath]
+		labels := metadata.Labels
 		if len(labels) == 0 {
-			if err := backend.WriteObject(ctx, object); err != nil {
-				return err
-			}
-			continue
+			labels = []string{"backend"}
 		}
 		for _, label := range labels {
+			var writeError error
 			switch label {
 			case "null":
 			case "backend":
-				if err := backend.WriteObject(ctx, object); err != nil {
-					return err
-				}
+				writeError = backend.WriteObject(ctx, object)
 			case "fallback":
 				if fallback == nil {
 					return fmt.Errorf("test file contains [fallback] objects, but no fallback provided")
 				}
-				if err := fallback.WriteObject(ctx, object); err != nil {
-					return err
-				}
+				writeError = fallback.WriteObject(ctx, object)
 			default:
 				filename, _ := data.allObjects.OriginalObjectName(object.StorePath)
 				return fmt.Errorf("%s: unknown label [%s]", filename, label)
+			}
+			switch {
+			case writeError != nil && metadata.ShouldFail:
+				log.Debugf(ctx, "Failed to write object: %v", writeError)
+			case writeError != nil && !metadata.ShouldFail:
+				return writeError
+			case writeError == nil && metadata.ShouldFail:
+				return fmt.Errorf("unexpected success in writing object %s", object.StorePath)
 			}
 		}
 	}

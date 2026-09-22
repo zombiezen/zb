@@ -33,7 +33,7 @@ func TestImport(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		data, err := readTestData(dir, "TestImport.txt", nil)
+		data, err := readTestData(dir, "TestImport/Common.txt", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +60,7 @@ func TestImport(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		data, err := readTestData(dir, "TestImport.txt", nil)
+		data, err := readTestData(dir, "TestImport/Common.txt", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -108,11 +108,57 @@ func TestImport(t *testing.T) {
 			}
 		}()
 
-		data, err := readTestData(dir, "TestImport.txt", nil)
+		data, err := readTestData(dir, "TestImport/Common.txt", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if err := data.writeTo(ctx, client, nil); err != nil {
+			t.Fatal(err)
+		}
+		runScriptTest(ctx, t, dir, server, data, nil)
+	})
+
+	t.Run("Ref", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := testcontext.New(t)
+		dir := backendtest.NewStoreDirectory(t)
+
+		server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+			TempDir: t.TempDir(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		data, err := readTestData(dir, t.Name()+".txt", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := data.writeTo(ctx, server, nil); err != nil {
+			t.Fatal(err)
+		}
+		runScriptTest(ctx, t, dir, server, data, nil)
+	})
+
+	t.Run("MissingRef", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := testcontext.New(t)
+		dir := backendtest.NewStoreDirectory(t)
+
+		server, err := backendtest.NewServer(ctx, t, dir, &backendtest.Options{
+			TempDir: t.TempDir(),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		data, err := readTestData(dir, t.Name()+".txt", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := data.writeTo(ctx, server, nil); err != nil {
 			t.Fatal(err)
 		}
 		runScriptTest(ctx, t, dir, server, data, nil)

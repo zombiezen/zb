@@ -25,6 +25,7 @@ If a store object's filenames are prefixed with `[fallback]` and/or `[backend]`,
 then the store object will be written only to those stores specified.
 A store object prefixed with `[null]` is only used to compute a path,
 but will not be written to either store.
+A store object prefixed with `!` is expected to fail on import.
 By default, store objects will only be written to the backend store.
 
 ## Scripts
