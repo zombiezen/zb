@@ -141,10 +141,11 @@ func (d *Deque[T]) PopFront(n int) {
 	s1, s2 := d.logicalSlice(0, n)
 	clear(s1)
 	clear(s2)
-	d.start += n
 	d.n -= n
 	if d.n == 0 {
 		d.start = 0
+	} else {
+		d.start = d.index(n)
 	}
 }
 

@@ -120,4 +120,16 @@ func TestDeque(t *testing.T) {
 		want = append(want, 3, 4)
 		check(t, d, want)
 	})
+	t.Run("PopFrontEndOfCap", func(t *testing.T) {
+		d := new(Deque[int])
+		d.Grow(5)
+		n := d.Cap() - d.Len()
+		for range n {
+			d.PushBack(999)
+		}
+		d.PopFront(n - 1)
+		d.PushBack(42)
+		d.PopFront(1)
+		check(t, d, []int{42})
+	})
 }
