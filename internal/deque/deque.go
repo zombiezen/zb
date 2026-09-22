@@ -52,17 +52,16 @@ func (d *Deque[T]) index(i int) int {
 }
 
 func (d *Deque[T]) logicalSlice(i, j int) ([]T, []T) {
+	if i == j {
+		i = d.index(i)
+		return d.slice[i:i], nil
+	}
 	i = d.index(i)
-
-	j += d.start
-	if j > len(d.slice) {
-		j -= len(d.slice)
+	j = d.index(j)
+	if i >= j {
+		return d.slice[i:], d.slice[:j]
 	}
-
-	if i <= j {
-		return d.slice[i:j], nil
-	}
-	return d.slice[i:], d.slice[:j]
+	return d.slice[i:j], nil
 }
 
 // All returns an indexed iterator over the values in front-to-back order.
@@ -204,6 +203,7 @@ func (d *Deque[T]) Grow(n int) {
 	}
 	s1, s2 := d.logicalSlice(0, d.n)
 	d.slice = slices.Grow(append(slices.Clip(s1), s2...), n)
+	d.start = 0
 	// Always make len(d.slice) == cap(d.slice).
 	// slices.Grow may add more capacity than requested.
 	d.slice = d.slice[:cap(d.slice)]
