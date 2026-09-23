@@ -281,7 +281,7 @@ func runScriptTest(ctx context.Context, tb testing.TB, dir zbstore.Directory, se
 	}
 	tb.Log(time.Now().UTC().Format(time.RFC3339))
 	work, _ := state.LookupEnv("WORK")
-	tb.Logf("$WORK=%s", work)
+	tb.Logf("$WORK=%s\n", work)
 	scripttest.Run(tb, engine, state, data.filename, bytes.NewReader(data.comment))
 	env = make(map[string]string)
 	for _, kv := range state.Environ() {
@@ -627,7 +627,7 @@ func (sc *storeCommands) runRealize(state *script.State, args ...string) (script
 			var err error
 			logFile.Data, err = backendtest.ReadLog(ctx, sc.server, realizeResponse.BuildID, result.DrvPath)
 			if err != nil {
-				state.Logf("%v", err)
+				state.Logf("%v\n", err)
 				continue
 			}
 			var hasRewrite bool
@@ -638,10 +638,11 @@ func (sc *storeCommands) runRealize(state *script.State, args ...string) (script
 			logArchive.Files = append(logArchive.Files, logFile)
 		}
 
+		var resultError error
 		if got.Status == zbstorerpc.BuildSuccess {
 			if len(drvPaths) == 1 {
 				if result, err := got.ResultForPath(drvPaths[0]); err != nil {
-					state.Logf("%v", err)
+					resultError = fmt.Errorf("get successful build result: %v", err)
 				} else {
 					for _, output := range result.Outputs {
 						if output.Path.Valid {
@@ -650,11 +651,10 @@ func (sc *storeCommands) runRealize(state *script.State, args ...string) (script
 					}
 				}
 			}
-			err = nil
 		} else {
-			err = fmt.Errorf("build %s failed with status %q", realizeResponse.BuildID, got.Status)
+			resultError = fmt.Errorf("build %s failed with status %q", realizeResponse.BuildID, got.Status)
 		}
-		return string(txtar.Format(logArchive)), "", err
+		return string(txtar.Format(logArchive)), "", resultError
 	}, nil
 }
 
@@ -709,7 +709,7 @@ func (sc *storeCommands) writeRealization() script.Cmd {
 			if err != nil {
 				return nil, err
 			}
-			state.Logf("Wrote realization %v → %s to fallback", realizationRef, outputPath)
+			state.Logf("Wrote realization %v → %s to fallback\n", realizationRef, outputPath)
 			return nil, nil
 		},
 	)
