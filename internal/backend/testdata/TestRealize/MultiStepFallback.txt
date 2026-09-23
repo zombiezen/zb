@@ -1,4 +1,4 @@
-# Write realizations.
+# Write realization to object that doesn't exist.
 [x86_64] [linux] storepath 0p34frm381dnk9332y7rf4yxwlbsphqh-hello2.txt.drv
 [aarch64] [linux] storepath m3lya30agjc5arf2pm65ns5594mjbdil-hello2.txt.drv
 [aarch64] [macos] storepath bxnr0kvx82rga2hf2bp0zfjnf03llpqd-hello2.txt.drv
@@ -6,11 +6,16 @@
 read drv1
 write-realization ${drv1}!out bkqixh2mcz01b5qh0nbfrd5hxlw3rszf-hello2.txt
 
+# Write realization for requested derivation, an object that does exist.
+[x86_64] [linux] storepath pvirhrv9a4i9p6hh4d9z0pwzb0xh3fsf-hello4.txt.drv
+[aarch64] [linux] storepath w3gvj3sw3a8vnp342sirkkdmkh0kp02y-hello4.txt.drv
+[aarch64] [macos] storepath 2vnjvmrijalc9idb5dvxbpqd66kxfxhs-hello4.txt.drv
+[x86_64] [windows] storepath w8lksj9ni7d33m7v18623572jzfd9lrw-hello4.txt.drv
+read drv2
+write-realization ${drv2}!out fycwwbcwl87fxmybg1lciygv2hv5k2gk-hello4.txt
+
 # Build.
-[x86_64] [linux] realize 4f26zlfdzs2gjhhfw253yl6v8zyr2phv-hello4.txt.drv
-[aarch64] [linux] realize q6hn6k7jp7ybrsjhlsz8a17rpqjgaz48-hello4.txt.drv
-[aarch64] [macos] realize g9qkm9x6mlpciqss0gql2djmy79c0avw-hello4.txt.drv
-[x86_64] [windows] realize 8zkb7c92mfm4cvw250vgj5cv297rl2w7-hello4.txt.drv
+realize $drv2
 
 # Check output.
 realpath $out
@@ -23,9 +28,7 @@ Hello, World!
 Derive(
   [("out", "", "r:sha256", "")],
   [],
-  [
-    "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"
-  ],
+  ["/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"],
   "x86_64-unknown-linux",
   "/bin/sh",
   [
@@ -89,7 +92,7 @@ Derive(
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- 4f26zlfdzs2gjhhfw253yl6v8zyr2phv-hello4.txt.drv --
+-- pvirhrv9a4i9p6hh4d9z0pwzb0xh3fsf-hello4.txt.drv --
 Derive(
   [("out", "", "r:sha256", "")],
   [("/opt/zb/store/0p34frm381dnk9332y7rf4yxwlbsphqh-hello2.txt.drv", ["out"])],
@@ -98,14 +101,14 @@ Derive(
   "/bin/sh",
   [
     "-c",
-    "while read line; do echo \"$line\"; done < $in > $out; while read line; do echo \"$line\"; done < $in >> $out"
+    "exit 1"
   ],
   [
     ("in", "/149hjhsvi7rih0bqzs02f5iyjrj0zwwj6dw17zn231llk7r0syq6"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- q6hn6k7jp7ybrsjhlsz8a17rpqjgaz48-hello4.txt.drv --
+-- w3gvj3sw3a8vnp342sirkkdmkh0kp02y-hello4.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [
@@ -116,14 +119,14 @@ Derive(
   "/bin/sh",
   [
     "-c",
-    "while read line; do echo \"$line\"; done < $in > $out; while read line; do echo \"$line\"; done < $in >> $out"
+    "exit 1"
   ],
   [
     ("in", "/093ipd130v53kv01c4yglj0gymfw8cvkziankvzwj0qh9wc9x0dn"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- g9qkm9x6mlpciqss0gql2djmy79c0avw-hello4.txt.drv --
+-- 2vnjvmrijalc9idb5dvxbpqd66kxfxhs-hello4.txt.drv --
 Derive(
   [("out","","r:sha256","")],
   [
@@ -134,14 +137,14 @@ Derive(
   "/bin/sh",
   [
     "-c",
-    "while read line; do echo \"$line\"; done < $in > $out; while read line; do echo \"$line\"; done < $in >> $out"
+    "exit 1"
   ],
   [
     ("in", "/15n24bkkcby6sni7ijfnq60kqnqypd0r5qc0c12agk3ivsc9wagc"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- 8zkb7c92mfm4cvw250vgj5cv297rl2w7-hello4.txt.drv --
+-- w8lksj9ni7d33m7v18623572jzfd9lrw-hello4.txt.drv --
 Derive(
   [("out", "", "r:sha256", "")],
   [("C:\\zb\\store\\7l1w4xi4yw958ngpch1k0ry8gcqr2yzw-hello2.txt.drv", ["out"])],
@@ -150,13 +153,18 @@ Derive(
   "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
   [
     "-Command",
-    "$x = Get-Content -Raw ${env:in} ; ($x + $x) | Out-File -NoNewline -Encoding ascii -FilePath ${env:out}"
+    "exit 1"
   ],
   [
     ("in", "/0ccjln8bdkcpihi9svd76kvfx266ab9cf39cnjzc293nc7jrngy1"),
     ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
   ]
 )
--- [fallback] bkqixh2mcz01b5qh0nbfrd5hxlw3rszf-hello2.txt --
+-- [null] bkqixh2mcz01b5qh0nbfrd5hxlw3rszf-hello2.txt --
+Hello, World!
+Hello, World!
+-- [fallback] fycwwbcwl87fxmybg1lciygv2hv5k2gk-hello4.txt --
+Hello, World!
+Hello, World!
 Hello, World!
 Hello, World!

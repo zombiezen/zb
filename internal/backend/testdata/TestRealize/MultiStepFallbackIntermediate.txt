@@ -1,5 +1,4 @@
-# Write full realization chain,
-# intentionally using a bad path to see if it poisons the builder state.
+# Write realization for first step.
 [x86_64] [linux] storepath 0p34frm381dnk9332y7rf4yxwlbsphqh-hello2.txt.drv
 [aarch64] [linux] storepath m3lya30agjc5arf2pm65ns5594mjbdil-hello2.txt.drv
 [aarch64] [macos] storepath bxnr0kvx82rga2hf2bp0zfjnf03llpqd-hello2.txt.drv
@@ -7,15 +6,11 @@
 read drv1
 write-realization ${drv1}!out bkqixh2mcz01b5qh0nbfrd5hxlw3rszf-hello2.txt
 
-[x86_64] [linux] storepath 4f26zlfdzs2gjhhfw253yl6v8zyr2phv-hello4.txt.drv
-[aarch64] [linux] storepath q6hn6k7jp7ybrsjhlsz8a17rpqjgaz48-hello4.txt.drv
-[aarch64] [macos] storepath g9qkm9x6mlpciqss0gql2djmy79c0avw-hello4.txt.drv
-[x86_64] [windows] storepath 8zkb7c92mfm4cvw250vgj5cv297rl2w7-hello4.txt.drv
-read drv2
-write-realization ${drv2}!out vmhnmp2nirlwf51qhxs2cklpfsmqq8zv-hello4.txt
-
 # Build.
-realize $drv2
+[x86_64] [linux] realize 4f26zlfdzs2gjhhfw253yl6v8zyr2phv-hello4.txt.drv
+[aarch64] [linux] realize q6hn6k7jp7ybrsjhlsz8a17rpqjgaz48-hello4.txt.drv
+[aarch64] [macos] realize g9qkm9x6mlpciqss0gql2djmy79c0avw-hello4.txt.drv
+[x86_64] [windows] realize 8zkb7c92mfm4cvw250vgj5cv297rl2w7-hello4.txt.drv
 
 # Check output.
 realpath $out
@@ -165,5 +160,3 @@ Derive(
 -- [fallback] bkqixh2mcz01b5qh0nbfrd5hxlw3rszf-hello2.txt --
 Hello, World!
 Hello, World!
--- [null] vmhnmp2nirlwf51qhxs2cklpfsmqq8zv-hello4.txt --
-THIS DOES NOT EXIST.

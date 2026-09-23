@@ -1,7 +1,6 @@
 # Backend Tests
 
 This directory holds the backend test suite.
-Each backend test has a corresponding function in the package's tests.
 Each test is written in [txtar][] format
 with the comment written in [`rsc.io/script`][] syntax (similar to bash).
 
