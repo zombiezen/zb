@@ -451,7 +451,7 @@ func (b *builder) realize(ctx context.Context, keepFailed bool) error {
 			if err != nil {
 				return fmt.Errorf("realize %s: %v", curr, err)
 			}
-			log.Debugf(ctx, "Hashed %s to %v", curr, drvHash)
+			log.Debugf(ctx, "Hashed %s to %v", curr, drvHash.Base32())
 			b.drvHashes[curr] = makeHashKey(drvHash)
 		} else if !node.want {
 			it.finish(curr, true)
@@ -547,7 +547,7 @@ func (b *builder) gatherRealizationsForDerivation(ctx context.Context, curr zbst
 	if err != nil {
 		return fmt.Errorf("realize %s: %v", curr, err)
 	}
-	log.Debugf(ctx, "Hashed %s to %v", curr, drvHash)
+	log.Debugf(ctx, "Hashed %s to %v", curr, drvHash.Base32())
 	drvHashKey := makeHashKey(drvHash)
 	b.drvHashes[curr] = drvHashKey
 
@@ -1257,10 +1257,10 @@ func buildResultOutputsFromPlanner(state *derivationBuildState, p *realizationPl
 func (b *builder) fetchRealizationsFromFallback(ctx context.Context, drvHash nix.Hash) zbstore.RealizationMap {
 	if b.reusePolicy.IsZero() {
 		// If our reuse policy won't permit any realizations, there's no point.
-		log.Debugf(ctx, "Skipping fallback store for %v (build does not allow reuse)", drvHash)
+		log.Debugf(ctx, "Skipping fallback store for %v (build does not allow reuse)", drvHash.Base32())
 		return zbstore.RealizationMap{DerivationHash: drvHash}
 	}
-	log.Debugf(ctx, "Fetching realizations for %v from fallback store...", drvHash)
+	log.Debugf(ctx, "Fetching realizations for %v from fallback store...", drvHash.Base32())
 	realizations, err := b.server.fallback.FetchRealizations(ctx, drvHash)
 	if err != nil {
 		log.Warnf(ctx, "Failed to fetch realizations: %v", err)
@@ -1943,7 +1943,7 @@ func (b *builder) recordRealizations(ctx context.Context, conn *sqlite.Conn, bui
 		for outputName, r := range outputs {
 			outputPaths[outputName] = r.OutputPath
 		}
-		log.Debugf(ctx, "Recording realizations for %v: %s", drvHash.toHash(), formatOutputPaths(outputPaths))
+		log.Debugf(ctx, "Recording realizations for %v: %s", drvHash.toHash().Base32(), formatOutputPaths(outputPaths))
 	}
 
 	rmap := zbstore.RealizationMap{

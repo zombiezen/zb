@@ -54,7 +54,7 @@ func (ref RealizationOutputReference) String() string {
 	if ref.IsZero() {
 		return "ε"
 	}
-	return ref.DerivationHash.Base64() + "!" + ref.OutputName
+	return ref.DerivationHash.Base32() + "!" + ref.OutputName
 }
 
 // MarshalJSON encodes the output reference to JSON.

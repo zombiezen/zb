@@ -45,10 +45,7 @@ func (eqClass equivalenceClass) toRealizationOutputReference() zbstore.Realizati
 }
 
 func (eqClass equivalenceClass) String() string {
-	if eqClass.isZero() {
-		return "ε"
-	}
-	return eqClass.drvHashKey.toHash().String() + "!" + eqClass.outputName.Value()
+	return eqClass.toRealizationOutputReference().String()
 }
 
 // pathAndEquivalenceClass holds a [zbstore.Path] and the [equivalenceClass] that produced it.
