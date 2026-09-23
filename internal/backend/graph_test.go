@@ -8,13 +8,20 @@ import (
 	"fmt"
 	"iter"
 	"maps"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"unique"
 
+	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/tailscale/hujson"
+	"golang.org/x/tools/txtar"
+	"zb.256lights.llc/pkg/internal/storetest"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/sets"
 	"zb.256lights.llc/pkg/zbstore"
@@ -22,162 +29,74 @@ import (
 )
 
 func TestAnalyze(t *testing.T) {
-	tests := []struct {
-		name           string
-		derivations    []*zbstore.Derivation
-		desiredOutputs map[string]sets.Set[string]
-		want           *dependencyGraph
-	}{
-		{
-			name: "Empty",
-			want: &dependencyGraph{},
-		},
-		{
-			name: "SingleNode",
-			derivations: []*zbstore.Derivation{
-				{
-					Name:    "foo.txt",
-					Dir:     zbstore.DefaultUnixDirectory,
-					System:  system.Current().String(),
-					Outputs: zbstore.DefaultFloatingOutput(),
-				},
-			},
-			desiredOutputs: map[string]sets.Set[string]{
-				"foo.txt": sets.New("out"),
-			},
-			want: &dependencyGraph{
-				roots: sets.New[zbstore.Path]("foo.txt"),
-				nodes: map[zbstore.Path]*dependencyGraphNode{
-					"foo.txt": {
-						usedOutputs: sets.New(unique.Make("out")),
-					},
-				},
-			},
-		},
-		{
-			name: "TwoNodes",
-			derivations: []*zbstore.Derivation{
-				{
-					Name:    "foo.txt",
-					Dir:     zbstore.DefaultUnixDirectory,
-					System:  system.Current().String(),
-					Outputs: zbstore.DefaultFloatingOutput(),
-				},
-				{
-					Name:    "bar.txt",
-					Dir:     zbstore.DefaultUnixDirectory,
-					System:  system.Current().String(),
-					Outputs: zbstore.DefaultFloatingOutput(),
-				},
-			},
-			desiredOutputs: map[string]sets.Set[string]{
-				"foo.txt": sets.New("out"),
-				"bar.txt": sets.New("out"),
-			},
-			want: &dependencyGraph{
-				roots: sets.New[zbstore.Path]("foo.txt", "bar.txt"),
-				nodes: map[zbstore.Path]*dependencyGraphNode{
-					"foo.txt": {
-						usedOutputs: sets.New(unique.Make("out")),
-					},
-					"bar.txt": {
-						usedOutputs: sets.New(unique.Make("out")),
-					},
-				},
-			},
-		},
-		{
-			name: "TwoNodeChain",
-			derivations: []*zbstore.Derivation{
-				{
-					Name:    "foo.txt",
-					Dir:     zbstore.DefaultUnixDirectory,
-					System:  system.Current().String(),
-					Outputs: zbstore.DefaultFloatingOutput(),
-				},
-				{
-					Name:   "bar.txt",
-					Dir:    zbstore.DefaultUnixDirectory,
-					System: system.Current().String(),
-					InputDerivations: map[zbstore.Path]*sets.Sorted[string]{
-						"foo.txt": sets.NewSorted("out"),
-					},
-					Outputs: zbstore.DefaultFloatingOutput(),
-				},
-			},
-			desiredOutputs: map[string]sets.Set[string]{
-				"bar.txt": sets.New("out"),
-			},
-			want: &dependencyGraph{
-				roots: sets.New[zbstore.Path]("foo.txt"),
-				nodes: map[zbstore.Path]*dependencyGraphNode{
-					"foo.txt": {
-						dependents:  sets.New[zbstore.Path]("bar.txt"),
-						usedOutputs: sets.New(unique.Make("out")),
-					},
-					"bar.txt": {
-						usedOutputs: sets.New(unique.Make("out")),
-					},
-				},
-			},
-		},
-		{
-			name: "Hinge",
-			derivations: []*zbstore.Derivation{
-				{
-					Name:    "foo.txt",
-					Dir:     zbstore.DefaultUnixDirectory,
-					System:  system.Current().String(),
-					Outputs: zbstore.DefaultFloatingOutput(),
-				},
-				{
-					Name:    "bar.txt",
-					Dir:     zbstore.DefaultUnixDirectory,
-					System:  system.Current().String(),
-					Outputs: zbstore.DefaultFloatingOutput(),
-				},
-				{
-					Name:   "baz.txt",
-					Dir:    zbstore.DefaultUnixDirectory,
-					System: system.Current().String(),
-					InputDerivations: map[zbstore.Path]*sets.Sorted[string]{
-						"foo.txt": sets.NewSorted("out"),
-						"bar.txt": sets.NewSorted("out"),
-					},
-					Outputs: zbstore.DefaultFloatingOutput(),
-				},
-			},
-			desiredOutputs: map[string]sets.Set[string]{
-				"baz.txt": sets.New("out"),
-			},
-			want: &dependencyGraph{
-				roots: sets.New[zbstore.Path]("foo.txt", "bar.txt"),
-				nodes: map[zbstore.Path]*dependencyGraphNode{
-					"foo.txt": {
-						dependents:  sets.New[zbstore.Path]("baz.txt"),
-						usedOutputs: sets.New(unique.Make("out")),
-					},
-					"bar.txt": {
-						dependents:  sets.New[zbstore.Path]("baz.txt"),
-						usedOutputs: sets.New(unique.Make("out")),
-					},
-					"baz.txt": {
-						usedOutputs: sets.New(unique.Make("out")),
-					},
-				},
-			},
-		},
+	t.Parallel()
+
+	testDataDir := filepath.Join("testdata", "TestAnalyze")
+	listing, err := os.ReadDir(testDataDir)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			derivations, err := rewriteDerivationsForGraphTest(test.derivations)
+	for _, entry := range listing {
+		fileName := entry.Name()
+		if entry.IsDir() || strings.HasPrefix(fileName, ".") {
+			continue
+		}
+		testName, isTXTAR := strings.CutSuffix(fileName, ".txt")
+		if !isTXTAR {
+			continue
+		}
+		fileName = filepath.Join(testDataDir, fileName)
+
+		t.Run(testName, func(t *testing.T) {
+			archive, err := txtar.ParseFile(fileName)
 			if err != nil {
 				t.Fatal(err)
 			}
-			desiredOutputs, err := rewriteDesiredOutputsForGraphTest(derivations, test.desiredOutputs)
+			store, err := storetest.TxtarObjects(zbstore.DefaultUnixDirectory, archive.Files)
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("%s: %v", fileName, err)
+			}
+			derivations := make(map[zbstore.Path]*zbstore.Derivation)
+			for _, object := range store.BlobSlice {
+				if _, isDrv := object.StorePath.DerivationName(); isDrv {
+					drv, err := zbstore.ParseDerivationObject(t.Context(), object)
+					if err != nil {
+						t.Fatal(err)
+					}
+					derivations[object.StorePath] = drv
+				}
+			}
+
+			jsonData, err := hujson.Standardize(archive.Comment)
+			if err != nil {
+				t.Fatalf("%s: %v", fileName, err)
+			}
+			var test struct {
+				DesiredOutputs []struct {
+					DrvName    string
+					OutputName string
+				}
+				Want map[string]struct {
+					Dependents  []string
+					UsedOutputs []string
+					Want        bool
+				}
+			}
+			if err := jsonv2.Unmarshal(jsonData, &test, jsonv2.RejectUnknownMembers(true)); err != nil {
+				t.Fatalf("%s: %v", fileName, err)
+			}
+			desiredOutputs := make(sets.Set[zbstore.OutputReference], len(test.DesiredOutputs))
+			for _, ref := range test.DesiredOutputs {
+				drvPath := store.Rewrites[ref.DrvName]
+				if drvPath == "" {
+					t.Errorf("%s: unknown derivation %+q", fileName, ref.DrvName)
+					continue
+				}
+				desiredOutputs.Add(zbstore.OutputReference{
+					DrvPath:    drvPath,
+					OutputName: ref.OutputName,
+				})
 			}
 
 			got, err := analyze(derivations, desiredOutputs)
@@ -185,71 +104,61 @@ func TestAnalyze(t *testing.T) {
 				t.Fatal("analyze:", err)
 			}
 
-			for drvPath, drv := range derivations {
-				node := got.nodes[drvPath]
-				if node == nil {
-					t.Errorf("analyze did not return a node for %s", drvPath)
+			if diff := cmp.Diff(got.want, desiredOutputs, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("graph.want (-want +got):\n%s", diff)
+			}
+
+			for name, want := range test.Want {
+				drvPath := store.Rewrites[name]
+				wantNode := &dependencyGraphNode{
+					derivation:  derivations[drvPath],
+					usedOutputs: make(sets.Set[unique.Handle[string]]),
+				}
+				if drvPath == "" || wantNode.derivation == nil {
+					t.Errorf("Want[%+q]: unknown derivation", name)
 					continue
 				}
-				if node.derivation == nil {
-					t.Errorf("analysis node for %s did not set derivation", drvPath)
-				} else if node.derivation != drv {
-					t.Errorf("analysis node for %s does not match derivation", drvPath)
+				for _, outputName := range want.UsedOutputs {
+					wantNode.usedOutputs.Add(unique.Make(outputName))
+				}
+				if len(want.Dependents) > 0 {
+					wantNode.dependents = make(sets.Set[zbstore.Path], len(want.Dependents))
+					for _, depName := range want.Dependents {
+						dep := store.Rewrites[depName]
+						if dep == "" {
+							t.Errorf("Want[%+q].Dependents: unknown derivation %+q", name, depName)
+							continue
+						}
+						wantNode.dependents.Add(dep)
+					}
+				}
+
+				diff := cmp.Diff(
+					wantNode, got.nodes[drvPath],
+					cmp.AllowUnexported(dependencyGraphNode{}),
+					cmp.FilterPath(
+						func(p cmp.Path) bool {
+							return p.Index(-2).Type() == reflect.TypeFor[dependencyGraphNode]() &&
+								p.Last().(cmp.StructField).Name() == "derivation"
+						},
+						cmp.Comparer(func(drv1, drv2 *zbstore.Derivation) bool {
+							// We specifically want pointer identity here: don't compare deeper.
+							return drv1 == drv2
+						}),
+					),
+					cmpopts.EquateEmpty(),
+				)
+				if diff != "" {
+					t.Errorf("graph.nodes[%+q] (-want +got):\n%s", drvPath, diff)
 				}
 			}
 
-			want := new(dependencyGraph)
-			*want = *test.want
-			want.want = make(sets.Set[zbstore.OutputReference])
-			for fakePath, outputNames := range test.desiredOutputs {
-				drvPath, err := pathForDrvName(maps.Keys(derivations), string(fakePath))
-				if err != nil {
-					t.Fatal("want.want:", err)
+			for drvPath := range got.nodes {
+				name, ok := store.OriginalObjectName(drvPath)
+				_, inWant := test.Want[name]
+				if !ok || !inWant {
+					t.Errorf("graph.nodes has unknown key %+q", drvPath)
 				}
-				for outputName := range outputNames.All() {
-					want.want.Add(zbstore.OutputReference{
-						DrvPath:    drvPath,
-						OutputName: outputName,
-					})
-				}
-			}
-			want.nodes = make(map[zbstore.Path]*dependencyGraphNode)
-			for fakePath, node := range test.want.nodes {
-				drvPath, err := pathForDrvName(maps.Keys(derivations), string(fakePath))
-				if err != nil {
-					t.Fatal("want.nodes:", err)
-				}
-				nodeClone := new(dependencyGraphNode)
-				*nodeClone = *node
-				nodeClone.dependents, err = rewriteKeys(node.dependents, func(p zbstore.Path) (zbstore.Path, error) {
-					return pathForDrvName(maps.Keys(derivations), string(p))
-				})
-				if err != nil {
-					t.Fatal("want.nodes:", err)
-				}
-				want.nodes[drvPath] = nodeClone
-			}
-			want.roots = make(sets.Set[zbstore.Path])
-			for fakePath := range test.want.roots.All() {
-				drvPath, err := pathForDrvName(maps.Keys(derivations), string(fakePath))
-				if err != nil {
-					t.Fatal("want.roots:", err)
-				}
-				want.roots.Add(drvPath)
-			}
-
-			diff := cmp.Diff(
-				want, got,
-				cmpopts.EquateEmpty(),
-				cmp.AllowUnexported(dependencyGraph{}),
-				cmp.AllowUnexported(dependencyGraphNode{}),
-				cmp.FilterPath(func(p cmp.Path) bool {
-					return p.Index(-2).Type() == reflect.TypeFor[dependencyGraphNode]() &&
-						p.Index(-1).(cmp.StructField).Name() == "derivation"
-				}, cmp.Ignore()),
-			)
-			if diff != "" {
-				t.Errorf("analysis (-want +got):\n%s", diff)
 			}
 		})
 	}
