@@ -671,28 +671,6 @@ func (s *Server) readLog(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Re
 		return nil, newNotFoundError()
 	}
 
-	f, openError := os.Open(builderLogPath(s.logDir, buildID, args.DrvPath))
-	if errors.Is(openError, os.ErrNotExist) {
-		conn, err := s.db.Get(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("fetch build result for %s in build %v: %v", args.DrvPath, buildID, err)
-		}
-		defer s.db.Put(conn)
-		results, err := findBuildResults(nil, conn, "", buildID, args.DrvPath)
-		if err != nil {
-			return nil, err
-		}
-		if len(results) == 0 {
-			return nil, newNotFoundError()
-		}
-		// Treat like a zero-length log.
-		return marshalResponse(&zbstorerpc.ReadLogResponse{EOF: true})
-	}
-	if openError != nil {
-		return nil, openError
-	}
-	defer f.Close()
-
 	const maxRead = 64 * 1024
 	end := args.RangeStart + maxRead
 	if args.RangeEnd.Valid {
@@ -700,37 +678,53 @@ func (s *Server) readLog(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Re
 	}
 	buf := make([]byte, end-args.RangeStart)
 
-	size, err := f.Seek(0, io.SeekEnd)
-	if err != nil {
-		return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
-	}
-	if args.RangeStart+int64(len(buf)) < size {
-		// Special case: if the requested range is within what's already written,
-		// we can skip acquiring a database connection.
-		// We only need the database connection to check whether the builder is finished.
-		if _, err := f.Seek(args.RangeStart, io.SeekStart); err != nil {
-			return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
-		}
-		n, err := io.ReadFull(f, buf)
-		if n == 0 {
-			if err == io.EOF {
-				err = io.ErrUnexpectedEOF
-			}
-			return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
-		}
-		resp := &zbstorerpc.ReadLogResponse{EOF: err == io.EOF}
-		resp.SetPayload(buf[:n])
-		return marshalResponse(resp)
-	}
-
-	conn, err := s.db.Get(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer s.db.Put(conn)
-
+	var logFile *os.File
+	var conn *sqlite.Conn
 	var results []*zbstorerpc.BuildResult
 	for {
+		if logFile == nil {
+			var openError error
+			logFile, openError = os.Open(builderLogPath(s.logDir, buildID, args.DrvPath))
+			if openError != nil && !errors.Is(openError, os.ErrNotExist) {
+				return nil, openError
+			}
+			if openError == nil {
+				defer logFile.Close()
+
+				// Special case: if the requested range is within what's already written,
+				// we can skip acquiring a database connection.
+				// We only need the database connection to check whether the builder is finished.
+				size, err := logFile.Seek(0, io.SeekEnd)
+				if err != nil {
+					return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
+				}
+				if args.RangeStart+int64(len(buf)) < size {
+					if _, err := logFile.Seek(args.RangeStart, io.SeekStart); err != nil {
+						return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
+					}
+					n, err := io.ReadFull(logFile, buf)
+					if n == 0 {
+						if err == io.EOF {
+							err = io.ErrUnexpectedEOF
+						}
+						return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
+					}
+					resp := &zbstorerpc.ReadLogResponse{EOF: err == io.EOF}
+					resp.SetPayload(buf[:n])
+					return marshalResponse(resp)
+				}
+			}
+		}
+
+		// Poll build result state.
+		if conn == nil {
+			var err error
+			conn, err = s.db.Get(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("fetch build result for %s in build %v: %v", args.DrvPath, buildID, err)
+			}
+			defer s.db.Put(conn)
+		}
 		var err error
 		results, err = findBuildResults(results[:0], conn, "", buildID, args.DrvPath)
 		if err != nil {
@@ -740,37 +734,41 @@ func (s *Server) readLog(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Re
 			return nil, newNotFoundError()
 		}
 
-		// Read log size after reading builder status.
-		// If the status is finished, then the log should be at its final size.
-		size, err := f.Seek(0, io.SeekEnd)
-		if err != nil {
-			return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
-		}
-		// At least one byte should be available.
-		if args.RangeStart < size {
-			if _, err := f.Seek(args.RangeStart, io.SeekStart); err != nil {
+		// Treat a missing log file the same as an empty log file.
+		var size int64
+		if logFile != nil {
+			var err error
+			size, err = logFile.Seek(0, io.SeekEnd)
+			if err != nil {
 				return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
 			}
-			n := 0
-			var readError error
-			for n < len(buf) && readError == nil {
-				var nn int
-				nn, readError = f.Read(buf[n:])
-				n += nn
-			}
-			if n == 0 {
-				if readError == io.EOF {
-					readError = io.ErrUnexpectedEOF
+			if args.RangeStart < size {
+				// At least one byte should be available.
+				if _, err := logFile.Seek(args.RangeStart, io.SeekStart); err != nil {
+					return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, err)
 				}
-				return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, readError)
+				n := 0
+				var readError error
+				for n < len(buf) && readError == nil {
+					var nn int
+					nn, readError = logFile.Read(buf[n:])
+					n += nn
+				}
+				if n == 0 {
+					if readError == io.EOF {
+						readError = io.ErrUnexpectedEOF
+					}
+					return nil, fmt.Errorf("read log for %s in build %v: %v", args.DrvPath, buildID, readError)
+				}
+				resp := &zbstorerpc.ReadLogResponse{
+					EOF: readError == io.EOF && results[0].Status.IsFinished(),
+				}
+				resp.SetPayload(buf[:n])
+				return marshalResponse(resp)
 			}
-			resp := &zbstorerpc.ReadLogResponse{
-				EOF: readError == io.EOF && results[0].Status.IsFinished(),
-			}
-			resp.SetPayload(buf[:n])
-			return marshalResponse(resp)
 		}
 
+		// If the status is finished, then the log should be at its final size.
 		if results[0].Status.IsFinished() {
 			if args.RangeStart > size {
 				return nil, fmt.Errorf("read log for %s in build %v: start byte %d out of range",

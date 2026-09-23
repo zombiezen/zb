@@ -111,6 +111,8 @@ from roughly 10 minutes to XX seconds with a reasonably fast internet connection
 - `zb serve` now performs more integrity checks during store import.
   ([#66](https://github.com/256lights/zb/issues/66))
 - Fixed an issue where interrupting a local store connection during an import could cause freezes.
+- Fixed an issue where build logs would not be streamed.
+  ([#394](https://github.com/256lights/zb/pull/394))
 - Updated to Go 1.26.5.
 
 ## [0.1.0][] - 2025-06-15
