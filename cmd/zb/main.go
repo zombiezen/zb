@@ -33,7 +33,6 @@ import (
 	"zb.256lights.llc/pkg/internal/jsonrpc"
 	"zb.256lights.llc/pkg/internal/luac"
 	"zb.256lights.llc/pkg/internal/lualex"
-	"zb.256lights.llc/pkg/internal/osutil"
 	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/internal/xurl"
@@ -68,10 +67,6 @@ type zbCommand struct {
 
 func (c *zbCommand) newKong() (*kong.Kong, error) {
 	g := defaultGlobalConfig(c.lookupEnv)
-	var defaultBuildUsersGroup string
-	if osutil.IsRoot() {
-		defaultBuildUsersGroup = backend.DefaultBuildUsersGroup
-	}
 	defaultOutLink := "result"
 	if runtime.GOOS == "windows" {
 		defaultOutLink = ""
@@ -93,19 +88,17 @@ func (c *zbCommand) newKong() (*kong.Kong, error) {
 			return mapNativeStorePath(dc, c.workdir, target)
 		})),
 		kong.Vars{
-			"default_store_dir":         string(g.Directory),
-			"default_store_socket":      g.StoreSocket,
-			"cache_db":                  g.CacheDB,
-			"http_cache":                g.HTTPCacheDB,
-			"netrc":                     g.NetrcPath,
-			"default_store_db":          filepath.Join(varDir(), "zb", "db.sqlite"),
-			"build_users_group":         defaultBuildUsersGroup,
-			"default_build_users_group": backend.DefaultBuildUsersGroup,
-			"default_log_dir":           filepath.Join(varDir(), "log", "zb"),
-			"default_out_link":          defaultOutLink,
-			"temp_dir":                  c.lookupEnv.tempDir(),
-			"num_cpu":                   strconv.Itoa(runtime.NumCPU()),
-			"supports_sandbox":          strconv.FormatBool(backend.SystemSupportsSandbox()),
+			"default_store_dir":    string(g.Directory),
+			"default_store_socket": g.StoreSocket,
+			"cache_db":             g.CacheDB,
+			"http_cache":           g.HTTPCacheDB,
+			"netrc":                g.NetrcPath,
+			"default_store_db":     filepath.Join(varDir(), "zb", "db.sqlite"),
+			"default_log_dir":      filepath.Join(varDir(), "log", "zb"),
+			"default_out_link":     defaultOutLink,
+			"temp_dir":             c.lookupEnv.tempDir(),
+			"num_cpu":              strconv.Itoa(runtime.NumCPU()),
+			"supports_sandbox":     strconv.FormatBool(backend.SystemSupportsSandbox()),
 		},
 	)
 	if err != nil {

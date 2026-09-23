@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
-	"os/user"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -24,8 +23,6 @@ import (
 	"golang.org/x/sync/errgroup"
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/backend"
-	"zb.256lights.llc/pkg/internal/osutil"
-	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/ui"
 	"zb.256lights.llc/pkg/internal/xnet"
 	"zb.256lights.llc/pkg/internal/zbstorehttp"
@@ -45,7 +42,6 @@ type serveCommand struct {
 	storeDatabaseFlags `kong:"embed"`
 
 	BuildDir          string            `kong:"name=build-root,default=${temp_dir},help=Store build artifacts in this directory."`
-	BuildUsersGroup   string            `kong:"default=${build_users_group},placeholder=${default_build_users_group},help=Run builds as users in the Unix group with the given name."`
 	LogDirectory      string            `kong:"default=${default_log_dir},help=Store logs in this directory."`
 	KeyFiles          []string          `kong:"name=signing-key,sep=none,placeholder=file,help=Key files for signing realizations (can be passed multiple times)"`
 	Sandbox           bool              `kong:"negatable,default=${supports_sandbox},help=Run builders in a restricted environment."`
@@ -69,11 +65,10 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig, stdio *standard
 	if !g.Directory.IsNative() {
 		return fmt.Errorf("%s cannot be used on this system", g.Directory)
 	}
-	if c.Sandbox && !backend.CanSandbox() {
-		if !backend.SystemSupportsSandbox() {
-			return fmt.Errorf("sandboxing requested but not supported on %v", system.Current())
+	if c.Sandbox {
+		if err := backend.CheckSandboxing(ctx); err != nil {
+			return fmt.Errorf("sandboxing requested: %v", err)
 		}
-		return fmt.Errorf("sandboxing requested but unable to use (are you running with admin privileges?)")
 	}
 	allKeyFiles := make([]string, 0, len(g.Server.KeyFiles)+len(c.KeyFiles))
 	for _, path := range g.Server.KeyFiles {
@@ -86,11 +81,7 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig, stdio *standard
 	if err != nil {
 		return err
 	}
-	storeDirGroupID, buildUsers, err := buildUsersForGroup(ctx, c.BuildUsersGroup)
-	if err != nil {
-		return err
-	}
-	if err := ensureStoreDirectory(string(g.Directory), storeDirGroupID); err != nil {
+	if err := ensureStoreDirectory(string(g.Directory)); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(g.StoreSocket), 0o755); err != nil {
@@ -155,7 +146,6 @@ func (c *serveCommand) Run(ctx context.Context, g *globalConfig, stdio *standard
 		ContentAddressBufferCreator: bytebuffer.TempFileCreator{Pattern: contentAddressTempFilePattern},
 		SandboxPaths:                c.SandboxPaths.toMap(stdio.workdir),
 		DisableSandbox:              !c.Sandbox,
-		BuildUsers:                  buildUsers,
 		AllowKeepFailed:             c.AllowKeepFailed,
 		CoresPerBuild:               c.CoresPerBuild,
 		BuildLogRetention:           c.BuildLogRetention,
@@ -322,7 +312,7 @@ func (w ignoreErrorsObjectWriter) WriteObject(ctx context.Context, object zbstor
 	return nil
 }
 
-func ensureStoreDirectory(path string, gid int) error {
+func ensureStoreDirectory(path string) error {
 	if err := os.MkdirAll(filepath.Dir(string(path)), 0o755); err != nil {
 		return err
 	}
@@ -337,48 +327,7 @@ func ensureStoreDirectory(path string, gid int) error {
 	if err := os.Chmod(path, mode); err != nil {
 		return err
 	}
-	if gid == -1 || gid == os.Getegid() {
-		return nil
-	}
-	if err := os.Chown(path, -1, gid); err != nil {
-		return err
-	}
 	return nil
-}
-
-func buildUsersForGroup(ctx context.Context, name string) (gid int, buildUsers []backend.BuildUser, err error) {
-	if name == "" {
-		return -1, nil, nil
-	}
-	if runtime.GOOS == "windows" {
-		return -1, nil, fmt.Errorf("cannot set --build-users-group on Windows")
-	}
-	g, userNames, err := osutil.LookupGroup(ctx, name)
-	if err != nil {
-		return -1, nil, err
-	}
-	gid, err = strconv.Atoi(g.Gid)
-	if err != nil {
-		return -1, nil, fmt.Errorf("build users group id: %v", err)
-	}
-	log.Debugf(ctx, "Using build group %s (gid=%d), users=%v", name, gid, userNames)
-	for _, userName := range userNames {
-		u, err := user.Lookup(userName)
-		if err != nil {
-			return gid, nil, fmt.Errorf("build users group: %v", err)
-		}
-		var buildUser backend.BuildUser
-		buildUser.UID, err = strconv.Atoi(u.Uid)
-		if err != nil {
-			return gid, nil, fmt.Errorf("build users group: user %s: user id: %v", userName, err)
-		}
-		buildUser.GID, err = strconv.Atoi(u.Gid)
-		if err != nil {
-			return gid, nil, fmt.Errorf("build users group: user %s: group id: %v", userName, err)
-		}
-		buildUsers = append(buildUsers, buildUser)
-	}
-	return gid, buildUsers, nil
 }
 
 type serverConfig struct {

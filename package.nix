@@ -1,6 +1,8 @@
 { buildGoModule
-, lib
+, bubblewrap
+, makeBinaryWrapper
 , installShellFiles
+, lib
 }:
 
 let
@@ -20,6 +22,7 @@ buildGoModule {
 
   nativeBuildInputs = [
     installShellFiles
+    makeBinaryWrapper
   ];
 
   src = ./.;
@@ -32,6 +35,9 @@ buildGoModule {
       --bash <($out/bin/zb completion -c bash) \
       --fish <($out/bin/zb completion -c fish) \
       --zsh <($out/bin/zb completion -c zsh)
+
+    wrapProgram $out/bin/zb \
+      --prefix PATH : ${lib.makeBinPath [bubblewrap]}
   '';
 
   meta = {

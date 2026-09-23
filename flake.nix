@@ -44,6 +44,8 @@
 
             # JavaScript tooling.
             pkgs.nodejs_22
+
+            pkgs.bubblewrap
           ];
 
           # Since using Go 1.25 from nixpkgs,

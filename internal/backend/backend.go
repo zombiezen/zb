@@ -12,6 +12,7 @@ import (
 	"iter"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -23,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"zb.256lights.llc/pkg/bytebuffer"
 	"zb.256lights.llc/pkg/internal/jsonrpc"
+	"zb.256lights.llc/pkg/internal/system"
 	"zb.256lights.llc/pkg/internal/xiter"
 	"zb.256lights.llc/pkg/internal/xtime"
 	"zb.256lights.llc/pkg/internal/zbstorerpc"
@@ -35,10 +37,6 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 	"zombiezen.com/go/xcontext"
 )
-
-// DefaultBuildUsersGroup is the conventional name of the Unix group
-// for the users that execute builders on behalf of the daemon.
-const DefaultBuildUsersGroup = "zbld"
 
 const heartRate = 5 * time.Second
 
@@ -102,11 +100,6 @@ type Options struct {
 	// If non-positive, then the number of cores detected on the machine is used.
 	CoresPerBuild int
 
-	// BuildUsers is the set of user IDs to use for builds on non-Windows systems.
-	// If empty, then builds will use the current process's privileges.
-	// [NewServer] will panic if multiple entries have the same user ID.
-	BuildUsers []BuildUser
-
 	// BuildContext optionally specifies a function that detaches the context for a build.
 	// If BuildContext is nil, the default is [context.Background].
 	BuildContext func(parent context.Context, buildID string) context.Context
@@ -130,26 +123,22 @@ type SandboxPath struct {
 	AlwaysPresent bool
 }
 
-// BuildUser is a descriptor for a Unix user.
-type BuildUser struct {
-	// UID is the user ID.
-	UID int
-	// GID is the user's primary group ID.
-	GID int
-}
-
-func (user BuildUser) String() string {
-	return fmt.Sprintf("%d:%d", user.UID, user.GID)
-}
-
 // SystemSupportsSandbox reports whether the host operating system supports sandboxing.
 func SystemSupportsSandbox() bool {
 	return runtime.GOOS == "linux"
 }
 
-// CanSandbox reports whether the current execution environment supports sandboxing.
-func CanSandbox() bool {
-	return SystemSupportsSandbox() && os.Geteuid() == 0
+// CheckSandboxing returns an error if the current execution environment is unable to sandbox processes.
+func CheckSandboxing(ctx context.Context) error {
+	if !SystemSupportsSandbox() {
+		return fmt.Errorf("%s does not support sandboxing", system.Current())
+	}
+	if runtime.GOOS == "linux" {
+		if _, err := exec.LookPath(bubblewrapProgramName); err != nil {
+			return fmt.Errorf("unable to sandbox: %v", err)
+		}
+	}
+	return nil
 }
 
 // Server is a local store.
@@ -179,7 +168,6 @@ type Server struct {
 
 	writing  mutexMap[zbstore.Path] // store objects being written
 	building mutexMap[zbstore.Path] // derivations being built
-	users    *userSet
 
 	// activeBuildsMu protects activeBuilds, activeWork, and drained.
 	activeBuildsMu sync.Mutex
@@ -204,10 +192,6 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 	if opts == nil {
 		opts = new(Options)
 	}
-	users, err := newUserSet(opts.BuildUsers)
-	if err != nil {
-		panic(err)
-	}
 	srv := &Server{
 		dir:             dir,
 		realDir:         opts.RealStoreDirectory,
@@ -215,10 +199,9 @@ func NewServer(dir zbstore.Directory, dbPath string, opts *Options) *Server {
 		logDir:          opts.LogDirectory,
 		caCreateTemp:    opts.ContentAddressBufferCreator,
 		allowKeepFailed: opts.AllowKeepFailed,
-		sandbox:         !opts.DisableSandbox && CanSandbox(),
+		sandbox:         !opts.DisableSandbox && SystemSupportsSandbox(),
 		sandboxPaths:    maps.Clone(opts.SandboxPaths),
 		coresPerBuild:   opts.CoresPerBuild,
-		users:           users,
 		activeBuilds:    make(map[uuid.UUID]context.CancelFunc),
 		buildContext:    opts.BuildContext,
 		keyring:         opts.Keyring.Clone(),
@@ -780,6 +763,7 @@ func (s *Server) readLog(ctx context.Context, req *jsonrpc.Request) (*jsonrpc.Re
 		}
 
 		// Wait for more.
+		const builderLogInterval = 100 * time.Millisecond
 		if err := xtime.Sleep(ctx, builderLogInterval); err != nil {
 			return nil, fmt.Errorf("read log for %s in build %v: %w", args.DrvPath, buildID, err)
 		}

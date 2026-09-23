@@ -78,11 +78,6 @@ func FirstPresentFile(paths iter.Seq[string]) (string, error) {
 	return "", firstError
 }
 
-const (
-	rootUID = 0
-	rootGID = 0
-)
-
 // Freeze removes any write permissions on the filesystem object at the given path
 // and adds read permissions for all users.
 // If the path names a directory,
@@ -122,14 +117,6 @@ func Freeze(path string, epoch time.Time, onError func(error) error) error {
 
 		if !epoch.IsZero() {
 			if err := os.Chtimes(path, time.Time{}, epoch); err != nil {
-				if err = onError(err); err != nil {
-					return err
-				}
-			}
-		}
-
-		if IsRoot() {
-			if err := os.Chown(path, rootUID, rootGID); err != nil {
 				if err = onError(err); err != nil {
 					return err
 				}

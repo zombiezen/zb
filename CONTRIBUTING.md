@@ -82,7 +82,7 @@ sudo ${PATH_TO?}/zb-v0.1.0-x86_64-unknown-linux/install \
   --no-launchd \
   --bin '' &&
 go build zb.256lights.llc/cmd/zb &&
-sudo ./zb serve \
+./zb serve \
   --debug \
   --sandbox \
   --sandbox-path /bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/busybox \
@@ -98,7 +98,7 @@ the default `/etc/resolv.conf` is a symlink,
 so you will need to set up the sandbox like this:
 
 ```shell
-sudo ./zb serve \
+./zb serve \
   --debug \
   --sandbox \
   --sandbox-path /bin/sh=/opt/zb/store/hpsxd175dzfmjrg27pvvin3nzv3yi61k-busybox-1.36.1/bin/busybox \

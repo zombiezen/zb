@@ -13,7 +13,6 @@ import (
 	"iter"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -862,14 +861,6 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 			return fmt.Errorf("build %s: input %s not present (%v)", drvPath, input, err)
 		}
 	}
-	buildUser, err := b.server.users.acquire(ctx)
-	if err != nil {
-		return fmt.Errorf("build %s: %v", drvPath, err)
-	}
-	if buildUser != nil {
-		log.Debugf(ctx, "Using build user %v", buildUser)
-	}
-	defer b.server.users.release(buildUser)
 
 	// Arrange for builder to run.
 	var runner runnerFunc
@@ -877,14 +868,16 @@ func (b *builder) do(ctx context.Context, drvPath zbstore.Path, outputNames sets
 	case state.derivation.System == builtinSystem:
 		log.Debugf(ctx, "Runner for %s is builtin", drvPath)
 		runner = runBuiltin
-	case b.server.sandbox:
-		log.Debugf(ctx, "Runner for %s is sandbox", drvPath)
-		runner = runSandboxed
-	default:
+	case b.server.sandbox && runtime.GOOS == "linux":
+		log.Debugf(ctx, "Runner for %s is bubblewrap", drvPath)
+		runner = runBubblewrapped
+	case !b.server.sandbox:
 		log.Debugf(ctx, "Runner for %s is unsandboxed", drvPath)
 		runner = runSubprocess
+	default:
+		return fmt.Errorf("build %s: don't know how to sandbox GOOS=%s", drvPath, runtime.GOOS)
 	}
-	tempOutPaths, err := b.runBuilder(ctx, conn, drvPath, state.buildResultID, keepFailed, buildUser, runner)
+	tempOutPaths, err := b.runBuilder(ctx, conn, drvPath, state.buildResultID, keepFailed, runner)
 	if err != nil {
 		return err
 	}
@@ -1284,61 +1277,7 @@ func (b *builder) inputs(conn *sqlite.Conn, drvPath zbstore.Path) (map[zbstore.P
 	return result, nil
 }
 
-// A runnerFunc is a function that can execute a builder.
-//
-// A runnerFunc should:
-//   - Run the builder program
-//     with the working directory
-//     (and TMPDIR or equivalent environment variables)
-//     set to invocation.buildDir.
-//     Mapping the location is acceptable,
-//     as long as files are physically stored in invocation.buildDir.
-//   - Return a [builderFailure] if the builder did not run succesfully
-//     (e.g. a user build failure).
-//     Any other type of error is treated as an internal backend failure.
-//   - Create filesystem objects in invocation.realStoreDir
-//     for each output path in invocation.outputPaths.
-type runnerFunc func(ctx context.Context, invocation *builderInvocation) error
-
-type builderInvocation struct {
-	// derivation is the derivation whose builder should be executed.
-	// The caller is responsible for expanding any placeholders
-	// in the derivation's fields.
-	derivation *zbstore.Derivation
-	// derivationPath is the path of the derivation whose builder is being executed.
-	derivationPath zbstore.Path
-	// outputPaths is the map of output name to path this builder is expected to produce.
-	outputPaths map[string]zbstore.Path
-
-	// realStoreDir is the directory where the store is located in the local filesystem.
-	realStoreDir string
-	// buildDir is the temporary directory created for this build.
-	buildDir string
-	// logWriter is where all builder output should be sent.
-	logWriter io.Writer
-	// lookup returns the store path for the given derivation output.
-	// lookup should return paths for the inputs to the derivation the runner is building
-	// at least.
-	lookup func(ref zbstore.OutputReference) (zbstore.Path, error)
-	// closure calls yield for each store object
-	// in the transitive closure of the store object at the given path.
-	closure func(path zbstore.Path, yield func(zbstore.Path) bool) error
-	// user is the Unix user to run the build as.
-	// If nil, then the current process's user should be used.
-	user *BuildUser
-	// cores is a hint from the user to the builder
-	// on the number of concurrent jobs to perform.
-	cores int
-	// sandboxPaths is a map of paths inside the sandbox
-	// to paths on the host machine.
-	// For sandboxed runners, these paths will be made available inside the sandbox.
-	sandboxPaths map[string]string
-}
-
-// builderLogInterval is the maximum time between flushes of the builder log.
-const builderLogInterval = 100 * time.Millisecond
-
-func (b *builder) runBuilder(ctx context.Context, conn *sqlite.Conn, drvPath zbstore.Path, buildResultID int64, keepFailed bool, buildUser *BuildUser, f runnerFunc) (outPaths map[string]zbstore.Path, err error) {
+func (b *builder) runBuilder(ctx context.Context, conn *sqlite.Conn, drvPath zbstore.Path, buildResultID int64, keepFailed bool, f runnerFunc) (outPaths map[string]zbstore.Path, err error) {
 	drvName, isDrv := drvPath.DerivationName()
 	if !isDrv {
 		return nil, fmt.Errorf("build %s: not a derivation", drvPath)
@@ -1382,11 +1321,6 @@ func (b *builder) runBuilder(ctx context.Context, conn *sqlite.Conn, drvPath zbs
 			log.Warnf(ctx, "Failed to clean up %s: %v", buildDir, err)
 		}
 	}()
-	if buildUser != nil {
-		if err := os.Chown(buildDir, buildUser.UID, -1); err != nil {
-			return nil, fmt.Errorf("build %s: %v", drvPath, err)
-		}
-	}
 	logFile, err := createBuilderLog(b.server.logDir, b.id, drvPath)
 	if err != nil {
 		return nil, fmt.Errorf("build %s: %v", drvPath, err)
@@ -1416,7 +1350,6 @@ func (b *builder) runBuilder(ctx context.Context, conn *sqlite.Conn, drvPath zbs
 		realStoreDir: b.server.realDir,
 		buildDir:     buildDir,
 		logWriter:    logFile,
-		user:         buildUser,
 		sandboxPaths: filterSandboxPaths(b.server.sandboxPaths, drv.Env[buildSystemDepsVar]),
 		cores:        b.server.coresPerBuild,
 
@@ -1482,32 +1415,6 @@ func (b *builder) runBuilder(ctx context.Context, conn *sqlite.Conn, drvPath zbs
 
 	log.Debugf(ctx, "Builder for %s has finished successfully", drvPath)
 	return outPaths, nil
-}
-
-// runSubprocess runs a builder by running a subprocess.
-// It satisfies the [runnerFunc] signature.
-func runSubprocess(ctx context.Context, invocation *builderInvocation) error {
-	if string(invocation.derivation.Dir) != invocation.realStoreDir {
-		return fmt.Errorf("store is unsandboxed and storage directory does not match store (%s)", invocation.derivation.Dir)
-	}
-
-	c := exec.CommandContext(ctx, invocation.derivation.Builder, invocation.derivation.Args...)
-	setCancelFunc(c)
-	env := maps.Clone(invocation.derivation.Env)
-	fillBaseEnv(env, invocation.derivation.Dir, invocation.buildDir, invocation.cores)
-	for k, v := range xmaps.Sorted(env) {
-		c.Env = append(c.Env, k+"="+v)
-	}
-	c.Dir = invocation.buildDir
-	c.Stdout = invocation.logWriter
-	c.Stderr = invocation.logWriter
-	c.SysProcAttr = sysProcAttrForUser(invocation.user)
-
-	if err := c.Run(); err != nil {
-		return builderFailure{err}
-	}
-
-	return nil
 }
 
 // outputPathRewrites returns an iterator of mappings of output placeholders

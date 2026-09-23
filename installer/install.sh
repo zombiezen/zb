@@ -58,6 +58,7 @@ usage() {
   log
   log "    --single-user               install without root privileges"
   log "    --bin DIR                   create symlinks to binaries in the given directory (default $bin_dir)"
+  # TODO(now): Gut this.
   log "    --build-users-group NAME    use the given Unix group for running builds, creating if necessary (default $build_users_group)"
   log "    --build-gid GID             group ID of Unix group to use if creating (default $build_gid)"
   log "    --build-users N             create N build users if creating build group (default $build_user_count)"
