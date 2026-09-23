@@ -103,12 +103,17 @@ func (s *Server) readDerivation(ctx context.Context, drvPath zbstore.Path) (*zbs
 	return drv, nil
 }
 
-func findPossibleRealizations(ctx context.Context, conn *sqlite.Conn, eqClass equivalenceClass, reuse *zbstorerpc.ReusePolicy) (presentInStore, absentFromStore sets.Set[zbstore.Path], err error) {
+func findPossibleRealizations(ctx context.Context, conn *sqlite.Conn, ref zbstore.RealizationOutputReference, reuse *zbstorerpc.ReusePolicy) (presentInStore, absentFromStore sets.Set[zbstore.Path], err error) {
 	defer func() {
 		if err != nil {
-			err = fmt.Errorf("find existing realizations for %v: %v", eqClass, err)
+			err = fmt.Errorf("find existing realizations for %v: %v", ref, err)
 		}
 	}()
+
+	if reuse.IsZero() {
+		log.Debugf(ctx, "Reuse policy is zero. No possible realizations for %v.", ref)
+		return nil, nil, nil
+	}
 
 	rollback, err := readonlySavepoint(conn)
 	if err != nil {
@@ -116,32 +121,50 @@ func findPossibleRealizations(ctx context.Context, conn *sqlite.Conn, eqClass eq
 	}
 	defer rollback()
 
-	dropTrustedPublicKeys, err := createTrustedPublicKeysTable(conn, reuse.PublicKeys)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer func() {
-		if err := dropTrustedPublicKeys(); err != nil {
-			log.Warnf(ctx, "%v", err)
-		}
-	}()
-
-	drvHash := eqClass.drvHashKey.toHash()
 	presentInStore = make(sets.Set[zbstore.Path])
 	absentFromStore = make(sets.Set[zbstore.Path])
 	err = sqlitex.ExecuteTransientFS(conn, sqlFiles(), "realizations/find.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
-			":drv_hash_algorithm": drvHash.Type().String(),
-			":drv_hash_bits":      drvHash.Bytes(nil),
-			":output_name":        eqClass.outputName.Value(),
-			":trust_all":          reuse.All,
+			":drv_hash_algorithm": ref.DerivationHash.Type().String(),
+			":drv_hash_bits":      ref.DerivationHash.Bytes(nil),
+			":output_name":        ref.OutputName,
 		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			rawPath := stmt.GetText("output_path")
 			outPath, err := zbstore.ParsePath(rawPath)
 			if err != nil {
-				log.Warnf(ctx, "Database contains realization with invalid path %q for %v (%v)", rawPath, eqClass, err)
+				log.Warnf(ctx, "Database contains realization with invalid path %q for %v (%v)", rawPath, ref, err)
 				return nil
+			}
+			if !reuse.All {
+				rc, err := referenceClassesForRealization(conn, ref, outPath)
+				if err != nil {
+					return err
+				}
+				r := &zbstore.Realization{
+					OutputPath:       outPath,
+					ReferenceClasses: rc,
+				}
+				signatures, signaturesError := signaturesForRealization(conn, ref, outPath)
+				hasMatch := false
+				for _, sig := range signatures {
+					if !slices.ContainsFunc(reuse.PublicKeys, sig.PublicKey.Equal) {
+						log.Debugf(ctx, "Untrusted signature for public key %s on realization for %s", &sig.PublicKey, outPath)
+						continue
+					}
+					if err := zbstore.VerifyRealizationSignature(ref, r, sig); err != nil {
+						log.Debugf(ctx, "Failed to verify signature for public key %s on realization for %s: %v",
+							&sig.PublicKey, outPath, err)
+					} else {
+						log.Debugf(ctx, "Verified signature with public key %s on realization for %s", &sig.PublicKey, outPath)
+						hasMatch = true
+						break
+					}
+				}
+				if !hasMatch {
+					log.Debugf(ctx, "No trusted signatures on realization for %s", outPath)
+					return signaturesError
+				}
 			}
 			if stmt.GetBool("present_in_store") {
 				presentInStore.Add(outPath)
@@ -157,43 +180,87 @@ func findPossibleRealizations(ctx context.Context, conn *sqlite.Conn, eqClass eq
 	return presentInStore, absentFromStore, nil
 }
 
-func createTrustedPublicKeysTable(conn *sqlite.Conn, keys []*zbstore.RealizationPublicKey) (dropTable func() error, err error) {
-	defer func() {
-		if err != nil {
-			err = fmt.Errorf("create trusted public keys table: %w", err)
-		}
-	}()
-	defer sqlitex.Save(conn)(&err)
+func signaturesForRealization(conn *sqlite.Conn, ref zbstore.RealizationOutputReference, outputPath zbstore.Path) ([]*zbstore.RealizationSignature, error) {
+	var result []*zbstore.RealizationSignature
+	err := sqlitex.ExecuteTransientFS(conn, sqlFiles(), "realizations/signatures.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":drv_hash_algorithm": ref.DerivationHash.Type().String(),
+			":drv_hash_bits":      ref.DerivationHash.Bytes(nil),
+			":output_name":        ref.OutputName,
+			":output_path":        string(outputPath),
+		},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			buf := make([]byte, stmt.GetLen("public_key")+stmt.GetLen("signature"))
+			newSignature := &zbstore.RealizationSignature{
+				PublicKey: zbstore.RealizationPublicKey{
+					Format: zbstore.RealizationSignatureFormat(stmt.GetText("format")),
+				},
+			}
+			n := stmt.GetBytes("public_key", buf)
+			newSignature.PublicKey.Data = buf[:n:n]
+			buf = buf[n:]
+			n = stmt.GetBytes("signature", buf)
+			newSignature.Signature = buf[:n:n]
 
-	err = sqlitex.ExecuteScriptFS(conn, sqlFiles(), "realizations/create_trusted_public_keys.sql", nil)
+			result = append(result, newSignature)
+			return nil
+		},
+	})
 	if err != nil {
-		return nil, err
+		return result, fmt.Errorf("fetch signatures for %v → %s: %v", ref, outputPath, err)
 	}
-	stmt, err := sqlitex.PrepareTransientFS(conn, sqlFiles(), "realizations/insert_trusted_public_key.sql")
+	return result, nil
+}
+
+func referenceClassesForRealization(conn *sqlite.Conn, ref zbstore.RealizationOutputReference, outputPath zbstore.Path) ([]*zbstore.ReferenceClass, error) {
+	var result []*zbstore.ReferenceClass
+	dir := outputPath.Dir()
+	err := sqlitex.ExecuteTransientFS(conn, sqlFiles(), "realizations/reference_classes.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":drv_hash_algorithm": ref.DerivationHash.Type().String(),
+			":drv_hash_bits":      ref.DerivationHash.Bytes(nil),
+			":output_name":        ref.OutputName,
+			":output_path":        string(outputPath),
+		},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			row := new(zbstore.ReferenceClass)
+			rawPath := stmt.GetText("path")
+			var sub string
+			var err error
+			row.Path, sub, err = dir.ParsePath(rawPath)
+			if err != nil {
+				return fmt.Errorf("path: %v", err)
+			}
+			if sub != "" {
+				return fmt.Errorf("path %s: must not contain a sub-path", rawPath)
+			}
+			if hashTypeName := stmt.GetText("drv_hash_algorithm"); hashTypeName != "" {
+				ht, err := nix.ParseHashType(hashTypeName)
+				if err != nil {
+					return fmt.Errorf("path %s: derivation hash: %v", row.Path, err)
+				}
+				bitsLength := stmt.GetLen("drv_hash_bits")
+				if bitsLength != ht.Size() {
+					return fmt.Errorf("path %s: derivation hash: incorrect size for %v (found %d instead of %d)",
+						row.Path, ht, bitsLength, ht.Size())
+				}
+				bits := make([]byte, bitsLength)
+				stmt.GetBytes("drv_hash_bits", bits)
+				row.Realization.DerivationHash = nix.NewHash(ht, bits)
+
+				row.Realization.OutputName = stmt.GetText("output_name")
+				if row.Realization.OutputName != "" && !zbstore.IsValidOutputName(row.Realization.OutputName) {
+					return fmt.Errorf("path %s: output name %q is not valid", row.Path, row.Realization.OutputName)
+				}
+			}
+			result = append(result, row)
+			return nil
+		},
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fetch reference classes for %v → %s: %v", ref, outputPath, err)
 	}
-	defer stmt.Finalize()
-
-	for _, k := range keys {
-		stmt.SetText(":format", string(k.Format))
-		stmt.SetBytes(":public_key", k.Data)
-
-		if _, err := stmt.Step(); err != nil {
-			return nil, err
-		}
-		if err := stmt.Reset(); err != nil {
-			return nil, err
-		}
-	}
-
-	return func() error {
-		err := sqlitex.ExecuteScriptFS(conn, sqlFiles(), "realizations/drop_trusted_public_keys.sql", nil)
-		if err != nil {
-			return fmt.Errorf("internal error: clean up temporary trusted public keys table: %v", err)
-		}
-		return nil
-	}, nil
+	return result, err
 }
 
 func recordRealizations(conn *sqlite.Conn, realizations iter.Seq2[zbstore.RealizationOutputReference, *zbstore.Realization]) (err error) {
@@ -794,9 +861,9 @@ func findBuildResults(dst []*zbstorerpc.BuildResult, conn *sqlite.Conn, logDir s
 					}
 					newOutput.Path = zbstorerpc.NonNull(p)
 
-					newOutput.Signatures, err = signaturesForRealization(signatureStmt, buildID, drvPath, outputName, p)
+					newOutput.Signatures, err = signaturesForBuildRealization(signatureStmt, buildID, drvPath, outputName, p)
 					if err != nil {
-						// signaturesForRealization includes the outputName in the error message,
+						// signaturesForBuildRealization includes the outputName in the error message,
 						// so no need to additionally wrap.
 						return err
 					}
@@ -816,8 +883,8 @@ func findBuildResults(dst []*zbstorerpc.BuildResult, conn *sqlite.Conn, logDir s
 	return dst, nil
 }
 
-// signaturesForRealization fetches the list of signatures stored for the given realization.
-func signaturesForRealization(stmt *sqlite.Stmt, buildID uuid.UUID, drvPath zbstore.Path, outputName string, outputPath zbstore.Path) ([]*zbstore.RealizationSignature, error) {
+// signaturesForBuildRealization fetches the list of signatures stored for the given realization.
+func signaturesForBuildRealization(stmt *sqlite.Stmt, buildID uuid.UUID, drvPath zbstore.Path, outputName string, outputPath zbstore.Path) ([]*zbstore.RealizationSignature, error) {
 	var result []*zbstore.RealizationSignature
 	stmt.SetText(":build_id", buildID.String())
 	stmt.SetText(":drv_path", string(drvPath))

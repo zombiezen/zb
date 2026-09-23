@@ -153,7 +153,7 @@ func (p *realizationPlanner) planFloating(ctx context.Context, conn *sqlite.Conn
 			},
 		}
 
-		presentInStore, absentFromStore, err := findPossibleRealizations(ctx, conn, dpe.equivalenceClass, p.reusePolicy)
+		presentInStore, absentFromStore, err := findPossibleRealizations(ctx, conn, dpe.equivalenceClass.toRealizationOutputReference(), p.reusePolicy)
 		if err != nil {
 			p.error = err
 			return

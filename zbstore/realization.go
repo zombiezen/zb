@@ -261,6 +261,12 @@ func (pub *RealizationPublicKey) Clone() *RealizationPublicKey {
 	}
 }
 
+// String returns the public key in JSON format.
+func (pub *RealizationPublicKey) String() string {
+	data, _ := jsonv2.Marshal(pub, jsontext.SpaceAfterColon(false), jsontext.SpaceAfterComma(false))
+	return string(data)
+}
+
 // A RealizationSignature is a cryptographic signature of a [RealizationOutputReference], [Realization] tuple.
 type RealizationSignature struct {
 	PublicKey RealizationPublicKey `json:",inline"`

@@ -1,0 +1,93 @@
+# Write a signed realization to the fallback store.
+ed25519-keygen
+read privateKey1
+ed25519-pubkey $privateKey1
+read publicKey1
+
+[x86_64] [linux] storepath 0p34frm381dnk9332y7rf4yxwlbsphqh-hello2.txt.drv
+[aarch64] [linux] storepath m3lya30agjc5arf2pm65ns5594mjbdil-hello2.txt.drv
+[aarch64] [macos] storepath bxnr0kvx82rga2hf2bp0zfjnf03llpqd-hello2.txt.drv
+[x86_64] [windows] storepath 7l1w4xi4yw958ngpch1k0ry8gcqr2yzw-hello2.txt.drv
+read drvPath
+write-realization --sign=$privateKey1 ${drvPath}!out bkqixh2mcz01b5qh0nbfrd5hxlw3rszf-hello2.txt
+
+# Build derivation and only trust an unused public key.
+ed25519-keygen
+read privateKey2
+ed25519-pubkey $privateKey2
+read publicKey2
+! realize --trust=$publicKey2 $drvPath
+
+-- jj24kz6i96lk2arql8642d84zsp210mv-hello.txt --
+Hello, World!
+-- 0p34frm381dnk9332y7rf4yxwlbsphqh-hello2.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [],
+  ["/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "exit 1"
+  ],
+  [
+    ("in", "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- m3lya30agjc5arf2pm65ns5594mjbdil-hello2.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [
+    "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"
+  ],
+  "aarch64-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "exit 1"
+  ],
+  [
+    ("in", "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- bxnr0kvx82rga2hf2bp0zfjnf03llpqd-hello2.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [
+    "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"
+  ],
+  "aarch64-apple-macos",
+  "/bin/sh",
+  [
+    "-c",
+    "exit 1"
+  ],
+  [
+    ("in", "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- 7l1w4xi4yw958ngpch1k0ry8gcqr2yzw-hello2.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [],
+  ["C:\\zb\\store\\jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"],
+  "x86_64-pc-windows",
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  [
+    "-Command",
+    "exit 1"
+  ],
+  [
+    ("in", "C:\\zb\\store\\jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- [fallback] bkqixh2mcz01b5qh0nbfrd5hxlw3rszf-hello2.txt --
+Hello, World!
+Hello, World!

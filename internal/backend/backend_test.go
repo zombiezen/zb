@@ -6,6 +6,9 @@ package backend_test
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"iter"
@@ -252,6 +255,9 @@ func runScriptTest(ctx context.Context, tb testing.TB, dir zbstore.Directory, se
 			"stop":   script.Stop(),
 			"skip":   scripttest.Skip(),
 			"read":   readCommand(),
+
+			"ed25519-keygen": generateEd25519(),
+			"ed25519-pubkey": ed25519PublicKey(),
 		},
 		Conds: map[string]script.Cond{},
 	}
@@ -328,6 +334,56 @@ func readCommand() script.Cmd {
 			}
 			state.Setenv(args[len(args)-1], firstLine)
 			return nil, nil
+		},
+	)
+}
+
+func generateEd25519() script.Cmd {
+	return script.Command(
+		script.CmdUsage{
+			Summary: "print a new signing private key to stdout",
+		},
+		func(state *script.State, args ...string) (script.WaitFunc, error) {
+			if len(args) != 0 {
+				return nil, script.ErrUsage
+			}
+			_, privateKey, err := ed25519.GenerateKey(nil)
+			if err != nil {
+				return nil, err
+			}
+			return func(state *script.State) (stdout string, stderr string, err error) {
+				return base64.StdEncoding.EncodeToString(privateKey.Seed()) + "\n", "", nil
+			}, nil
+		},
+	)
+}
+
+func ed25519PublicKey() script.Cmd {
+	return script.Command(
+		script.CmdUsage{
+			Summary: "convert an Ed25519 private key to a public key",
+			Args:    "KEY",
+		},
+		func(state *script.State, args ...string) (script.WaitFunc, error) {
+			if len(args) != 1 {
+				return nil, script.ErrUsage
+			}
+			bits, err := base64.StdEncoding.DecodeString(args[0])
+			if err != nil {
+				return nil, err
+			}
+			var key ed25519.PrivateKey
+			switch len(bits) {
+			case ed25519.PrivateKeySize:
+				key = bits
+			case ed25519.SeedSize:
+				key = ed25519.NewKeyFromSeed(bits)
+			default:
+				return nil, fmt.Errorf("wrong private key size")
+			}
+			return func(state *script.State) (stdout string, stderr string, err error) {
+				return base64.StdEncoding.EncodeToString(key.Public().(ed25519.PublicKey)) + "\n", "", nil
+			}, nil
 		},
 	)
 }
@@ -553,7 +609,7 @@ func (sc *storeCommands) realize() script.Cmd {
 	return script.Command(
 		script.CmdUsage{
 			Summary: "realize one or more derivations in the store",
-			Args:    "[--clean] drvPath...",
+			Args:    "[--clean] [--trust=PUBLIC_KEY] drvPath...",
 			Async:   true,
 		},
 		sc.runRealize,
@@ -563,15 +619,32 @@ func (sc *storeCommands) realize() script.Cmd {
 func (sc *storeCommands) runRealize(state *script.State, args ...string) (script.WaitFunc, error) {
 	ctx := state.Context()
 
-	clean := false
+	reusePolicy := &zbstorerpc.ReusePolicy{
+		All: true,
+	}
 	for ; len(args) > 0 && strings.HasPrefix(args[0], "-"); args = args[1:] {
 		if args[0] == "--" {
 			args = args[1:]
 			break
 		}
-		switch args[0] {
-		case "--clean":
-			clean = true
+		switch {
+		case args[0] == "--clean":
+			reusePolicy.All = false
+			reusePolicy.PublicKeys = nil
+		case strings.HasPrefix(args[0], "--trust="):
+			flagArg := args[0][len("--trust="):]
+			bits, err := base64.StdEncoding.DecodeString(flagArg)
+			if err != nil {
+				return nil, err
+			}
+			if len(bits) != ed25519.PublicKeySize {
+				return nil, fmt.Errorf("%s: wrong size", flagArg)
+			}
+			reusePolicy.All = false
+			reusePolicy.PublicKeys = append(reusePolicy.PublicKeys, &zbstore.RealizationPublicKey{
+				Format: zbstore.Ed25519SignatureFormat,
+				Data:   bits,
+			})
 		default:
 			return nil, script.ErrUsage
 		}
@@ -596,7 +669,7 @@ func (sc *storeCommands) runRealize(state *script.State, args ...string) (script
 	realizeResponse := new(zbstorerpc.RealizeResponse)
 	err := jsonrpc.Do(ctx, sc.server, zbstorerpc.RealizeMethod, realizeResponse, &zbstorerpc.RealizeRequest{
 		DrvPaths: drvPaths,
-		Reuse:    &zbstorerpc.ReusePolicy{All: !clean},
+		Reuse:    reusePolicy,
 	})
 	if err != nil {
 		return nil, err
@@ -666,10 +739,36 @@ func (sc *storeCommands) writeRealization() script.Cmd {
 	return script.Command(
 		script.CmdUsage{
 			Summary: "write a realization to the fallback store",
-			Args:    "drvPath!outputName path",
+			Args:    "[--sign=PRIVATE_KEY|--forge=PUBLIC_KEY ...] drvPath!outputName path",
 		},
 		func(state *script.State, args ...string) (script.WaitFunc, error) {
 			ctx := state.Context()
+			var signingKeys []ed25519.PrivateKey
+			var forgeKeys []ed25519.PublicKey
+			for len(args) > 1 {
+				if flagArg, ok := strings.CutPrefix(args[0], "--sign="); ok {
+					keyBits, err := base64.StdEncoding.DecodeString(flagArg)
+					if err != nil {
+						return nil, err
+					}
+					if len(keyBits) != ed25519.SeedSize {
+						return nil, fmt.Errorf("wrong size for ed25519 private key")
+					}
+					signingKeys = append(signingKeys, ed25519.NewKeyFromSeed(keyBits))
+				} else if flagArg, ok := strings.CutPrefix(args[0], "--forge="); ok {
+					keyBits, err := base64.StdEncoding.DecodeString(flagArg)
+					if err != nil {
+						return nil, err
+					}
+					if len(keyBits) != ed25519.PublicKeySize {
+						return nil, fmt.Errorf("wrong size for ed25519 public key")
+					}
+					forgeKeys = append(forgeKeys, keyBits)
+				} else {
+					break
+				}
+				args = args[1:]
+			}
 			if len(args) != 2 {
 				return nil, script.ErrUsage
 			}
@@ -704,10 +803,34 @@ func (sc *storeCommands) writeRealization() script.Cmd {
 					}
 				}
 			}
+
+			for _, key := range signingKeys {
+				ref := zbstore.RealizationOutputReference{
+					DerivationHash: drvHash,
+					OutputName:     ref.OutputName,
+				}
+				sig, err := zbstore.SignRealizationWithEd25519(ref, realization, key)
+				if err != nil {
+					return nil, err
+				}
+				realization.Signatures = append(realization.Signatures, sig)
+			}
+			for _, publicKey := range forgeKeys {
+				signature := make([]byte, ed25519.SignatureSize)
+				rand.Read(signature)
+				realization.Signatures = append(realization.Signatures, &zbstore.RealizationSignature{
+					PublicKey: zbstore.RealizationPublicKey{
+						Format: zbstore.Ed25519SignatureFormat,
+						Data:   publicKey,
+					},
+					Signature: signature,
+				})
+			}
+
 			err = sc.fallback.WriteRealizations(ctx, zbstore.RealizationMap{
 				DerivationHash: drvHash,
 				Realizations: map[string][]*zbstore.Realization{
-					ref.OutputName: []*zbstore.Realization{realization},
+					ref.OutputName: {realization},
 				},
 			})
 			if err != nil {

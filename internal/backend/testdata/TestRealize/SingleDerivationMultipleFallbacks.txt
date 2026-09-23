@@ -1,0 +1,87 @@
+# Write two realizations to fallback for the same derivation.
+[x86_64] [linux] storepath 0p34frm381dnk9332y7rf4yxwlbsphqh-hello2.txt.drv
+[aarch64] [linux] storepath m3lya30agjc5arf2pm65ns5594mjbdil-hello2.txt.drv
+[aarch64] [macos] storepath bxnr0kvx82rga2hf2bp0zfjnf03llpqd-hello2.txt.drv
+[x86_64] [windows] storepath 7l1w4xi4yw958ngpch1k0ry8gcqr2yzw-hello2.txt.drv
+read drvPath
+write-realization ${drvPath}!out bkqixh2mcz01b5qh0nbfrd5hxlw3rszf-hello2.txt
+write-realization ${drvPath}!out m6yqvvapb9jrxpkaigd81r0grfiwwflh-hello2.txt
+
+# Derivation should not use fallbacks.
+! realize $drvPath
+
+-- jj24kz6i96lk2arql8642d84zsp210mv-hello.txt --
+Hello, World!
+-- 0p34frm381dnk9332y7rf4yxwlbsphqh-hello2.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [],
+  ["/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"],
+  "x86_64-unknown-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "exit 1"
+  ],
+  [
+    ("in", "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- m3lya30agjc5arf2pm65ns5594mjbdil-hello2.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [
+    "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"
+  ],
+  "aarch64-linux",
+  "/bin/sh",
+  [
+    "-c",
+    "exit 1"
+  ],
+  [
+    ("in", "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- bxnr0kvx82rga2hf2bp0zfjnf03llpqd-hello2.txt.drv --
+Derive(
+  [("out","","r:sha256","")],
+  [],
+  [
+    "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"
+  ],
+  "aarch64-apple-macos",
+  "/bin/sh",
+  [
+    "-c",
+    "exit 1"
+  ],
+  [
+    ("in", "/opt/zb/store/jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- 7l1w4xi4yw958ngpch1k0ry8gcqr2yzw-hello2.txt.drv --
+Derive(
+  [("out", "", "r:sha256", "")],
+  [],
+  ["C:\\zb\\store\\jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"],
+  "x86_64-pc-windows",
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  [
+    "-Command",
+    "exit 1"
+  ],
+  [
+    ("in", "C:\\zb\\store\\jj24kz6i96lk2arql8642d84zsp210mv-hello.txt"),
+    ("out", "/1rz4g4znpzjwh1xymhjpm42vipw92pr73vdgl6xs1hycac8kf2n9")
+  ]
+)
+-- [fallback] bkqixh2mcz01b5qh0nbfrd5hxlw3rszf-hello2.txt --
+Hello, World!
+Hello, World!
+-- [fallback] m6yqvvapb9jrxpkaigd81r0grfiwwflh-hello2.txt --
+Another reality, perhaps?
