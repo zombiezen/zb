@@ -1,11 +1,16 @@
 # Write realizations.
 [x86_64] [linux] storepath w17yzm6g0dkdbscjy3n9my0nxz3pbg35-hello2.txt.drv
+[aarch64] [linux] storepath fkpdyvn3cb9lf08d661dh39mwi8n17hw-hello2.txt.drv
+[aarch64] [macos] storepath qmrxi87w23jm4f60wx0b2lr3fs8lygyh-hello2.txt.drv
 [x86_64] [windows] storepath h0hcjwibqfbbknpmd9lvsni4czz24xqc-hello2.txt.drv
 read hello2Drv
 write-realization ${hello2Drv}!out aim6kwh9m22dbsi1a8rbkdixbzyak3rk-hello2.txt
 
 # Realize two derivations.
 [x86_64] [linux] realize f2ghg8yy55z5xh7g5y63r9nd3pgdblik-base.txt.drv 866bbbczbi8cnkcjcxjz0rcr6riz4j17-hello4.txt.drv
+[aarch64] [linux] realize 6r93ba43nmqlr9ryp2iwdjgzsb5mrwm8-base.txt.drv k8vdavmn958irzirzrb1mvfw5w3cm6hg-hello4.txt.drv
+[aarch64] [macos] realize qxh23kinc2vnfz16l4fnq5jg6av8xz81-base.txt.drv zgghrxgqfsg7w3883xrw7ilcddj3zjxv-hello4.txt.drv
+[x86_64] [windows] realize v7jz6v48dzk72c92gd3ar0k88zygm00j-base.txt.drv rmk0msrh20hjn8038nmgz7z123zh1l74-hello4.txt.drv
 
 realpath $out
 read realOut
