@@ -244,12 +244,14 @@ func runScriptTest(ctx context.Context, tb testing.TB, dir zbstore.Directory, se
 		opts = new(scriptTestOptions)
 	}
 
+	defaultConds := scripttest.DefaultConds()
 	engine := &script.Engine{
 		Cmds: map[string]script.Cmd{
 			"env":    script.Env(),
 			"echo":   script.Echo(),
 			"stdout": script.Stdout(),
 			"stderr": script.Stderr(),
+			"cat":    script.Cat(),
 			"grep":   script.Grep(),
 			"wait":   script.Wait(),
 			"stop":   script.Stop(),
@@ -259,7 +261,10 @@ func runScriptTest(ctx context.Context, tb testing.TB, dir zbstore.Directory, se
 			"ed25519-keygen": generateEd25519(),
 			"ed25519-pubkey": ed25519PublicKey(),
 		},
-		Conds: map[string]script.Cond{},
+		Conds: map[string]script.Cond{
+			"verbose": defaultConds["verbose"],
+			"short":   defaultConds["short"],
+		},
 	}
 	sc := &storeCommands{
 		tb:         tb,

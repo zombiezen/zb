@@ -48,6 +48,7 @@ Scripts have the following commands available:
 - `read name...`: read one line from the stdout buffer and assign to names
 - `stdout pattern`: find lines in the stdout buffer that match a pattern
 - `stderr pattern`: find lines in the stderr buffer that match a pattern
+- `cat file...`: concatenate files and print to the script's stdout buffer
 - `grep pattern file`: find lines in a file that match a pattern
 - `exists [-readonly] [-exec] file...`: check that files exist
 - `only [path...]`: verify that the store contains exactly the set of objects named
@@ -72,4 +73,6 @@ Scripts have the following conditions available:
 - `linux`
 - `macos`
 - `windows`
+- `short` is active when the `-test.short` flag is set.
+- `verbose` is active when the `-test.v` flag is set.
 
