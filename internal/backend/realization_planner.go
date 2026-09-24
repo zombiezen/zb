@@ -131,6 +131,11 @@ func (p *realizationPlanner) planFloating(ctx context.Context, conn *sqlite.Conn
 	if p.error != nil || p.has(drvHash) {
 		return
 	}
+	defer func() {
+		if errors.Is(p.error, errRealizationNotFound) {
+			log.Debugf(ctx, "No suitable realizations exist for %v", drvPath)
+		}
+	}()
 	rollback, err := readonlySavepoint(conn)
 	if err != nil {
 		p.error = err
@@ -165,8 +170,10 @@ func (p *realizationPlanner) planFloating(ctx context.Context, conn *sqlite.Conn
 				p.error = err
 				return
 			}
+			log.Debugf(ctx, "No locally present realizations found for %v. Widening...", dpe.toOutputReference())
 			r.path, r.closure, err = p.pick(ctx, conn, dpe, absentFromStore)
 			if errors.Is(err, errMultipleRealizations) {
+				log.Debugf(ctx, "Found conflicts in absent realizations for %v (%v). Downgrading to not found.", dpe.toOutputReference(), err)
 				p.error = fmt.Errorf("pick compatible realization for %v: %w", dpe.toOutputReference(), errRealizationNotFound)
 				return
 			}
@@ -272,7 +279,6 @@ func (p *realizationPlanner) pick(ctx context.Context, conn *sqlite.Conn, dpe de
 	}
 
 	if selectedPath == "" {
-		log.Debugf(ctx, "No suitable realizations exist for %v", dpe.toOutputReference())
 		return "", nil, fmt.Errorf("pick compatible realization for %v: %w", dpe.toOutputReference(), errRealizationNotFound)
 	}
 
